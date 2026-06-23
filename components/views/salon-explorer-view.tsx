@@ -175,6 +175,7 @@ export function SalonExplorerView({
   }
 
   return (
+    <>
     <section>
       <PageHeader
         eyebrow="Members across the U.S. & Canada"
@@ -416,10 +417,10 @@ export function SalonExplorerView({
         </div>
       </div>
     </section>
-
     <SalonDetailPanel
       salon={selectedSalon}
       onClose={() => setSelectedSalon(null)}
     />
+    </>
   )
 }
