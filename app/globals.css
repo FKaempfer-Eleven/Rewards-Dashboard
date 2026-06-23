@@ -1,0 +1,150 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--font-inter), 'Inter Fallback', system-ui, sans-serif;
+  --font-display: var(--font-oswald), var(--font-inter), sans-serif;
+  --font-heading: var(--font-oswald), var(--font-inter), sans-serif;
+  --font-mono: var(--font-inter), monospace;
+
+  /* mapped shadcn tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+
+  /* brand palette */
+  --color-paper: var(--paper);
+  --color-paper2: var(--paper2);
+  --color-ink: var(--ink);
+  --color-ink2: var(--ink2);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line2: var(--line2);
+  --color-coral: var(--coral);
+  --color-coral-deep: var(--coral-deep);
+  --color-peach: var(--peach);
+  --color-peach-soft: var(--peach-soft);
+  --color-gen: var(--gen);
+  --color-gen-soft: var(--gen-soft);
+  --color-proc: var(--proc);
+  --color-proc-soft: var(--proc-soft);
+  --color-err: var(--err);
+  --color-err-soft: var(--err-soft);
+  --color-miss: var(--miss);
+  --color-miss-soft: var(--miss-soft);
+  --color-blue: var(--blue);
+
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+}
+
+:root {
+  color-scheme: light;
+
+  --paper: #f4ebe3;
+  --paper2: #fbf6f2;
+  --ink: #1c1a19;
+  --ink2: #3a332e;
+  --faint: #a99c90;
+  --line: #e7dace;
+  --line2: #efe6dc;
+  --coral: #e8654f;
+  --coral-deep: #c9483b;
+  --peach: #f7cdbc;
+  --peach-soft: #fbe4da;
+  --gen: #2f9e78;
+  --gen-soft: #e0f0e8;
+  --proc: #d89a2e;
+  --proc-soft: #f8ebd2;
+  --err: #e8654f;
+  --err-soft: #fbdfd8;
+  --miss: #c8bbae;
+  --miss-soft: #eee6dc;
+  --blue: #5b8db8;
+
+  --shadow: 0 1px 2px rgba(28, 26, 25, 0.04), 0 8px 24px rgba(28, 26, 25, 0.06);
+  --shadow-lg: 0 12px 40px rgba(28, 26, 25, 0.16);
+
+  /* shadcn semantic tokens */
+  --background: #f4ebe3;
+  --foreground: #1c1a19;
+  --card: #ffffff;
+  --card-foreground: #1c1a19;
+  --popover: #ffffff;
+  --popover-foreground: #1c1a19;
+  --primary: #e8654f;
+  --primary-foreground: #ffffff;
+  --secondary: #fbf6f2;
+  --secondary-foreground: #1c1a19;
+  --muted: #857a70;
+  --muted-foreground: #857a70;
+  --accent: #fbe4da;
+  --accent-foreground: #c9483b;
+  --destructive: #e8654f;
+  --border: #e7dace;
+  --input: #e7dace;
+  --ring: #e8654f;
+  --radius: 14px;
+  --sidebar: #1c1a19;
+  --sidebar-foreground: #ede6df;
+  --sidebar-accent: #e8654f;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* refined scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d8cabd;
+  border-radius: 8px;
+  border: 2px solid var(--paper);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
