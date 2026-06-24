@@ -1,26 +1,29 @@
 "use client"
 
 import { useCallback, useRef, useState } from "react"
-import { LayoutGrid, Users, Map as MapIcon, Search } from "lucide-react"
+import { LayoutGrid, Users, Map as MapIcon, Search, Upload } from "lucide-react"
 
 import { ToastProvider } from "@/components/toast"
 import { OverviewView } from "@/components/views/overview-view"
 import { SalonExplorerView } from "@/components/views/salon-explorer-view"
 import { SalonMapView } from "@/components/views/salon-map-view"
+import { UploadView } from "@/components/views/upload-view"
 
-export type ViewKey = "overview" | "salons" | "map"
+export type ViewKey = "overview" | "salons" | "map" | "upload"
 export type QuickQuery = "errors" | "top" | "ca" | null
 
 const VIEW_LABELS: Record<ViewKey, string> = {
   overview: "Overview",
   salons: "Salon Explorer",
   map: "Salon Map",
+  upload: "Upload",
 }
 
 const NAV: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
   { key: "salons", label: "Salon Explorer", icon: Users },
   { key: "map", label: "Salon Map", icon: MapIcon },
+  { key: "upload", label: "Upload monthly purchases", icon: Upload },
 ]
 
 export function Dashboard() {
@@ -140,6 +143,7 @@ export function Dashboard() {
               />
             )}
             {view === "map" && <SalonMapView />}
+            {view === "upload" && <UploadView />}
           </div>
         </div>
       </div>
