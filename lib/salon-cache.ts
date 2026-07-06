@@ -1,27 +1,25 @@
-// In-memory cache of all salon aggregate data from Dataverse.
-// Fetched once per server instance (or when TTL expires), then filtered/sorted
-// per-request in the API route — so filtering is instant after the first load.
+// Salon aggregate cache backed by Next.js Data Cache (unstable_cache).
+// On Vercel, this persists across serverless invocations — unlike a plain
+// module-level variable which resets on every cold start.
+//
+// Cache TTL: 1 hour.  Tag: "salons" — call revalidateTag("salons") from a
+// Server Action or Route Handler to force an early refresh (e.g. after upload).
 
+import { unstable_cache } from "next/cache"
 import { dvFetch } from "./dataverse-client"
 import { mapRowToLiveSalon, type LiveSalon } from "./live-salon"
 
-const CACHE_TTL = 60 * 60 * 1000 // 1 hour
-
-interface CacheEntry {
-  salons: LiveSalon[]
-  timestamp: number
-}
-
-let _cache: CacheEntry | null = null
+export const SALON_CACHE_TAG = "salons"
 
 // ── FetchXML builder ──────────────────────────────────────────────────────────
 
 function buildFetchXml(page: number, cookie?: string): string {
-  // Escape the cookie value for use in XML attribute
   const cookieAttr = cookie
     ? ` paging-cookie="${cookie.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"`
     : ""
 
+  // dom_acctnumber is nvarchar — MAX not supported; use groupby instead.
+  // createdon is a system DateTime field that supports MAX aggregate.
   return `<fetch aggregate="true" page="${page}" count="5000"${cookieAttr} no-lock="true">
   <entity name="contact">
     <attribute name="contactid" groupby="true" alias="id"/>
@@ -94,9 +92,7 @@ async function fetchAllFromDataverse(): Promise<LiveSalon[]> {
     if (!existing) {
       byId.set(s.id, s)
     } else {
-      // Keep whichever acctnumber belongs to the more recent record
-      const useNew =
-        (s.lastPurchase ?? "") > (existing.lastPurchase ?? "")
+      const useNew = (s.lastPurchase ?? "") > (existing.lastPurchase ?? "")
       byId.set(s.id, {
         ...existing,
         acctnumber: useNew ? s.acctnumber : existing.acctnumber,
@@ -109,34 +105,26 @@ async function fetchAllFromDataverse(): Promise<LiveSalon[]> {
         monthCount: existing.monthCount + s.monthCount,
         lastPurchase: useNew ? s.lastPurchase : existing.lastPurchase,
         isActive: existing.isActive || s.isActive,
-        avgMonthlySales: 0, // recalculated below
+        avgMonthlySales: 0,
       })
     }
   }
 
-  // Recalculate avgMonthlySales after merging
-  const merged = Array.from(byId.values()).map((s) => ({
+  return Array.from(byId.values()).map((s) => ({
     ...s,
     avgMonthlySales: s.monthCount > 0 ? s.lifetimeSales / s.monthCount : 0,
   }))
-
-  return merged
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/** Returns all salons, using the in-memory cache when fresh. */
-export async function getAllSalons(): Promise<LiveSalon[]> {
-  if (_cache && Date.now() - _cache.timestamp < CACHE_TTL) {
-    return _cache.salons
-  }
-
-  const salons = await fetchAllFromDataverse()
-  _cache = { salons, timestamp: Date.now() }
-  return salons
-}
-
-/** Force-refresh the cache (e.g. after an upload). */
-export function invalidateSalonCache(): void {
-  _cache = null
-}
+/**
+ * Returns all salons from Next.js Data Cache (Vercel-persisted, 1-hour TTL).
+ * On cache miss this fetches ~5k records from Dataverse (~10-15s).
+ * On cache hit this returns instantly from Vercel's CDN data layer.
+ */
+export const getAllSalons = unstable_cache(
+  fetchAllFromDataverse,
+  ["salon-aggregate-data"],
+  { revalidate: 3600, tags: [SALON_CACHE_TAG] }
+)

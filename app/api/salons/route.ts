@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server"
 import { getAllSalons } from "@/lib/salon-cache"
 import type { LiveSalon } from "@/lib/live-salon"
 
+// Allow up to 60s on Pro plan; Hobby plan caps at 10s but unstable_cache
+// means cold starts only happen once per hour — subsequent requests are instant.
+export const maxDuration = 60
+
 const PAGE_SIZE = 50
 
 export async function GET(req: NextRequest) {
