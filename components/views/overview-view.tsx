@@ -11,13 +11,16 @@ import {
   DISTRIBUTORS,
   MATRIX,
   MONTHS,
-  SALONS,
-  TIMESERIES,
   curErrors,
   fmt,
-  totalSpend,
   usdC,
 } from "@/lib/data"
+import {
+  LIVE_CURRENT_MONTH,
+  LIVE_LIFETIME_SALES,
+  LIVE_SALON_COUNT,
+  LIVE_TIMESERIES,
+} from "@/lib/live-data"
 
 // Green = uploaded OK, Yellow = errors, Red = not uploaded, Amber = processing
 const STATUS_CLASS: Record<number, string> = {
@@ -35,14 +38,14 @@ export function OverviewView({
   onQuickQuery: (q: QuickQuery) => void
   uploadedCells?: Set<string>
 }) {
-  const [curMonth, setCurMonth] = useState(MONTHS.length - 1)
+  const [curMonth, setCurMonth] = useState(LIVE_CURRENT_MONTH)
   const [errTarget, setErrTarget] = useState<ErrTarget | null>(null)
 
-  const ts = TIMESERIES[curMonth]
+  const ts = LIVE_TIMESERIES[curMonth]
   const er = curErrors(curMonth)
 
   const kpis = [
-    { l: "Salon members", v: fmt(SALONS.length), s: "enrolled in rewards" },
+    { l: "Salon members", v: fmt(LIVE_SALON_COUNT), s: "enrolled in rewards" },
     { l: "Active distributors", v: String(DISTRIBUTORS.length), s: "uploading sales data" },
     { l: `Points issued · ${MONTHS[curMonth]}`, v: fmt(ts[1]), s: "this period" },
     {
@@ -50,7 +53,7 @@ export function OverviewView({
       v: fmt(ts[2]),
       s: `${((ts[2] / ts[1]) * 100).toFixed(0)}% of issued`,
     },
-    { l: "Lifetime sales tracked", v: usdC(totalSpend), s: "across all salons" },
+    { l: "Lifetime sales tracked", v: usdC(LIVE_LIFETIME_SALES), s: "across all salons" },
     {
       l: "Records blocking points",
       v: fmt(er.e),
@@ -59,7 +62,11 @@ export function OverviewView({
     },
   ]
 
-  const months4 = MONTHS.slice(-4).map((m, i) => ({ m, idx: MONTHS.length - 4 + i }))
+  // Show the 4 months up to and including the latest complete month
+  const months4 = Array.from({ length: 4 }, (_, i) => {
+    const idx = LIVE_CURRENT_MONTH - 3 + i
+    return { m: MONTHS[idx], idx }
+  })
 
   return (
     <section>

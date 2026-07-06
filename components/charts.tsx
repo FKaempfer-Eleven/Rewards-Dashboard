@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react"
 
-import { DISTRIBUTORS, TIMESERIES, distSpend, usdC } from "@/lib/data"
+import { DISTRIBUTORS, distSpend, usdC } from "@/lib/data"
+import { LIVE_TIMESERIES } from "@/lib/live-data"
 
 export function TimeseriesChart() {
-  const ts = TIMESERIES
+  const ts = LIVE_TIMESERIES
   const W = 520
   const H = 210
   const pl = 10
