@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   ComposableMap,
   Geographies,
@@ -12,22 +12,38 @@ import { Minus, Plus, RotateCcw, ChevronLeft } from "lucide-react"
 
 import { Panel, PanelHeader, PageHeader } from "@/components/panel"
 import { US_TOPO, CANADA_TOPO } from "@/lib/geo"
-import {
-  DISTRIBUTORS,
-  SALON,
-  SALONS,
-  STATES,
-  type Salon,
-  distCount,
-  fmt,
-  salonCity,
-  salonName,
-  stateCount,
-  stateDist,
-  totalSpend,
-  usd,
-  usdC,
-} from "@/lib/data"
+import { DISTRIBUTORS, STATES, fmt, usd, usdC } from "@/lib/data"
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type MapStats = {
+  total: number
+  totalSales: number
+  states: Record<string, { count: number; sales: number }>
+  distributors: Record<string, number>
+}
+
+type MapSalon = {
+  id: string
+  salonName: string
+  city: string | null
+  state: string | null
+  distributorCode: string | null
+  distributorIdx: number
+  lifetimeSales: number
+  isActive: boolean
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Deterministic jitter from GUID: same salon always at same position. */
+function jitteredCoords(id: string, lat: number, lon: number): [number, number] {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0
+  const jLat = ((h & 0xff) / 255 - 0.5) * 3.0        // ±1.5° lat
+  const jLon = (((h >> 8) & 0xff) / 255 - 0.5) * 5.0  // ±2.5° lon
+  return [lon + jLon, lat + jLat]
+}
 
 const DEFAULT_CENTER: [number, number] = [-96, 47]
 const DEFAULT_ZOOM = 1
@@ -36,20 +52,56 @@ function colorScale(c: number, max: number) {
   const t = Math.min(1, c / max)
   const a = [251, 228, 218]
   const b = [200, 72, 59]
-  const r = Math.round(a[0] + (b[0] - a[0]) * t)
-  const g = Math.round(a[1] + (b[1] - a[1]) * t)
-  const bl = Math.round(a[2] + (b[2] - a[2]) * t)
-  return `rgb(${r},${g},${bl})`
+  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * t)},${Math.round(a[1] + (b[1] - a[1]) * t)},${Math.round(a[2] + (b[2] - a[2]) * t)})`
 }
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export function SalonMapView() {
   const [center, setCenter] = useState<[number, number]>(DEFAULT_CENTER)
   const [zoom, setZoom] = useState(DEFAULT_ZOOM)
-  const [activeState, setActiveState] = useState<number | null>(null)
+  const [activeState, setActiveState] = useState<number | null>(null) // STATES index
   const [distToggle, setDistToggle] = useState<Set<number>>(new Set())
   const [tip, setTip] = useState<{ x: number; y: number; html: string } | null>(null)
 
-  const maxCount = useMemo(() => Math.max(...stateCount), [])
+  // Real data
+  const [mapStats, setMapStats] = useState<MapStats | null>(null)
+  const [activeSalons, setActiveSalons] = useState<MapSalon[]>([])
+  const [loadingDrill, setLoadingDrill] = useState(false)
+
+  // Fetch overview stats on mount
+  useEffect(() => {
+    fetch("/api/map-stats")
+      .then((r) => r.json())
+      .then(setMapStats)
+      .catch(console.error)
+  }, [])
+
+  // Counts by STATES array position
+  const stateCountArr = useMemo(
+    () => STATES.map((s) => mapStats?.states[s.abbr]?.count ?? 0),
+    [mapStats]
+  )
+  const maxCount = useMemo(() => Math.max(...stateCountArr, 1), [stateCountArr])
+
+  // Distributor counts from real data
+  const distCountArr = useMemo(
+    () => DISTRIBUTORS.map((d) => mapStats?.distributors[d.code] ?? 0),
+    [mapStats]
+  )
+
+  // Fetch salons when drilling into a state
+  useEffect(() => {
+    if (activeState === null) { setActiveSalons([]); return }
+    const abbr = STATES[activeState]?.abbr
+    if (!abbr) return
+    setLoadingDrill(true)
+    fetch(`/api/map-salons?state=${abbr}`)
+      .then((r) => r.json())
+      .then((d) => setActiveSalons(d.salons ?? []))
+      .catch(console.error)
+      .finally(() => setLoadingDrill(false))
+  }, [activeState])
 
   function enterState(si: number) {
     const st = STATES[si]
@@ -68,18 +120,21 @@ export function SalonMapView() {
     setZoom((z) => Math.max(1, Math.min(18, z * factor)))
   }
 
-  const pins = useMemo<Salon[]>(() => {
-    if (activeState === null) return []
-    let list = SALONS.filter((s) => s[SALON.state] === activeState)
-    if (distToggle.size) list = list.filter((s) => distToggle.has(s[SALON.dist]))
+  // Pins with jittered coordinates
+  const pins = useMemo(() => {
+    if (activeState === null || !STATES[activeState]) return []
+    const { lat, lon } = STATES[activeState]
+    let list = activeSalons
+    if (distToggle.size > 0) list = list.filter((s) => distToggle.has(s.distributorIdx))
+    // Cap at 900 pins for perf
     if (list.length > 900) {
       const step = list.length / 900
-      const out: Salon[] = []
+      const out: MapSalon[] = []
       for (let k = 0; k < list.length; k += step) out.push(list[Math.floor(k)])
       list = out
     }
-    return list
-  }, [activeState, distToggle])
+    return list.map((s) => ({ ...s, coords: jitteredCoords(s.id, lat, lon) }))
+  }, [activeState, activeSalons, distToggle])
 
   const pinR = Math.max(1.2, Math.min(4, 5 / zoom))
   const bubbleScale = (c: number) => Math.max(7, Math.sqrt(c) * 1.6)
@@ -179,7 +234,7 @@ export function SalonMapView() {
                   {({ geographies }) =>
                     geographies.map((geo) => {
                       const si = STATES.findIndex((s) => s.name === geo.properties.name)
-                      const count = si >= 0 ? stateCount[si] : 0
+                      const count = si >= 0 ? stateCountArr[si] : 0
                       const dim = activeState !== null && si !== activeState
                       const sel = activeState !== null && si === activeState
                       return (
@@ -221,10 +276,10 @@ export function SalonMapView() {
                   }
                 </Geographies>
 
-                {/* Bubbles (overview) */}
+                {/* Bubbles — overview mode */}
                 {activeState === null &&
                   STATES.map((s, si) => {
-                    const c = stateCount[si]
+                    const c = stateCountArr[si]
                     if (!c) return null
                     const r = bubbleScale(c) / zoom
                     return (
@@ -242,12 +297,7 @@ export function SalonMapView() {
                         onMouseLeave={() => setTip(null)}
                         style={{ default: { cursor: "pointer" }, hover: { cursor: "pointer" } }}
                       >
-                        <circle
-                          r={r}
-                          fill="rgba(28,26,25,0.78)"
-                          stroke="#fff"
-                          strokeWidth={0.6}
-                        />
+                        <circle r={r} fill="rgba(28,26,25,0.78)" stroke="#fff" strokeWidth={0.6} />
                         <text
                           textAnchor="middle"
                           y={3 / zoom}
@@ -264,23 +314,23 @@ export function SalonMapView() {
                     )
                   })}
 
-                {/* Pins (state detail) */}
+                {/* Pins — state drill-down */}
                 {pins.map((s, i) => (
                   <Marker
                     key={i}
-                    coordinates={[s[SALON.lon], s[SALON.lat]]}
+                    coordinates={s.coords}
                     onMouseEnter={() =>
                       setTip({
                         x: 0,
                         y: 0,
-                        html: `<b>${salonName(s)} · ${salonCity(s)}</b><br><span style="color:#a99c90">${DISTRIBUTORS[s[SALON.dist]].short} · ${usd(s[SALON.spend])} lifetime</span>`,
+                        html: `<b>${s.salonName}${s.city ? ` · ${s.city}` : ""}</b><br><span style="color:#a99c90">${DISTRIBUTORS[s.distributorIdx]?.short ?? s.distributorCode ?? "—"} · ${usd(s.lifetimeSales)} lifetime</span>`,
                       })
                     }
                     onMouseLeave={() => setTip(null)}
                   >
                     <circle
                       r={pinR}
-                      fill={DISTRIBUTORS[s[SALON.dist]].color}
+                      fill={DISTRIBUTORS[s.distributorIdx]?.color ?? "#888"}
                       stroke="#fff"
                       strokeWidth={0.4}
                       fillOpacity={0.9}
@@ -295,9 +345,17 @@ export function SalonMapView() {
         {/* Side panel */}
         <div className="flex flex-col gap-4">
           <Panel>
-            <PanelHeader title={activeState === null ? "North America" : STATES[activeState].name} />
+            <PanelHeader
+              title={activeState === null ? "North America" : STATES[activeState].name}
+            />
             <div className="p-5">
-              <SidePanel activeState={activeState} />
+              <SidePanel
+                activeState={activeState}
+                mapStats={mapStats}
+                stateCountArr={stateCountArr}
+                activeSalons={activeSalons}
+                loadingDrill={loadingDrill}
+              />
             </div>
           </Panel>
 
@@ -323,7 +381,7 @@ export function SalonMapView() {
                   >
                     <i className="size-2.5 rounded-full" style={{ background: d.color }} />
                     <span className="text-ink2">{d.short}</span>
-                    <span className="ml-auto tabular-nums text-muted">{fmt(distCount[i])}</span>
+                    <span className="ml-auto tabular-nums text-muted">{fmt(distCountArr[i])}</span>
                   </button>
                 )
               })}
@@ -334,6 +392,8 @@ export function SalonMapView() {
     </section>
   )
 }
+
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 function MapBtn({
   onClick,
@@ -355,18 +415,35 @@ function MapBtn({
   )
 }
 
-function SidePanel({ activeState }: { activeState: number | null }) {
+function SidePanel({
+  activeState,
+  mapStats,
+  stateCountArr,
+  activeSalons,
+  loadingDrill,
+}: {
+  activeState: number | null
+  mapStats: MapStats | null
+  stateCountArr: number[]
+  activeSalons: MapSalon[]
+  loadingDrill: boolean
+}) {
   if (activeState === null) {
-    const topStates = STATES.map((s, k) => ({ s, c: stateCount[k] }))
+    // Overview panel
+    const topStates = STATES.map((s, k) => ({ s, c: stateCountArr[k] }))
       .sort((a, b) => b.c - a.c)
       .slice(0, 6)
-    const regions = STATES.filter((_, k) => stateCount[k] > 0).length
+    const regions = stateCountArr.filter((c) => c > 0).length
+
     return (
       <div>
-        <Stat k="Total salons" v={fmt(SALONS.length)} />
+        <Stat k="Total salons" v={mapStats ? fmt(mapStats.total) : "—"} />
         <Stat k="States & provinces" v={String(regions)} />
-        <Stat k="Lifetime sales" v={usdC(totalSpend)} />
-        <SideList title="Top regions" rows={topStates.map((t) => [t.s.name, fmt(t.c)])} />
+        <Stat k="Lifetime sales" v={mapStats ? usdC(mapStats.totalSales) : "—"} />
+        <SideList
+          title="Top regions"
+          rows={topStates.filter((t) => t.c > 0).map((t) => [t.s.name, fmt(t.c)])}
+        />
         <p className="mt-3.5 border-t border-line2 pt-3.5 text-[12px] leading-relaxed text-faint">
           Tip — click a state to see its salons. Each pin is one salon, colored by its servicing
           distributor.
@@ -375,27 +452,40 @@ function SidePanel({ activeState }: { activeState: number | null }) {
     )
   }
 
-  const list = SALONS.filter((s) => s[SALON.state] === activeState)
-  let sp = 0
-  for (const s of list) sp += s[SALON.spend]
-  const db = stateDist[activeState]
-    .map((c, di) => ({ c, di }))
-    .filter((o) => o.c > 0)
-    .sort((a, b) => b.c - a.c)
+  // State drill-down panel
+  const abbr = STATES[activeState].abbr
+  const stateStats = mapStats?.states[abbr]
+
+  if (loadingDrill) {
+    return (
+      <div className="py-6 text-center text-[12.5px] text-muted">Loading salons…</div>
+    )
+  }
+
+  // City breakdown
   const cm: Record<string, number> = {}
-  for (const s of list) {
-    const cn = salonCity(s)
+  for (const s of activeSalons) {
+    const cn = s.city ?? "—"
     cm[cn] = (cm[cn] || 0) + 1
   }
   const topCities = Object.entries(cm)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 6)
 
+  // Top distributor
+  const dm: Record<number, number> = {}
+  for (const s of activeSalons) dm[s.distributorIdx] = (dm[s.distributorIdx] ?? 0) + 1
+  const topDistIdx = Object.entries(dm).sort((a, b) => b[1] - a[1])[0]?.[0]
+
   return (
     <div>
-      <Stat k={`Salons in ${STATES[activeState].abbr}`} v={fmt(list.length)} />
-      <Stat k="Lifetime sales" v={usdC(sp)} />
-      <Stat k="Top distributor" v={db.length ? DISTRIBUTORS[db[0].di].short : "—"} small />
+      <Stat k={`Salons in ${abbr}`} v={fmt(stateStats?.count ?? activeSalons.length)} />
+      <Stat k="Lifetime sales" v={usdC(stateStats?.sales ?? 0)} />
+      <Stat
+        k="Top distributor"
+        v={topDistIdx !== undefined ? (DISTRIBUTORS[Number(topDistIdx)]?.short ?? "—") : "—"}
+        small
+      />
       <SideList title="Top cities" rows={topCities.map(([c, n]) => [c, fmt(n)])} />
     </div>
   )
