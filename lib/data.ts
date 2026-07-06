@@ -9,6 +9,8 @@ export type Distributor = {
   name: string
   short: string
   color: string
+  /** Account number prefix used in Dataverse (e.g. "EVO", "WES") */
+  code: string
 }
 
 export type StateInfo = {
@@ -60,13 +62,12 @@ function rng(seed: number) {
 }
 
 export const DISTRIBUTORS: Distributor[] = [
-  { name: "West Coast Beauty Supply", short: "West Coast", color: "#E8654F" },
-  { name: "Salon Centric National", short: "SalonCentric", color: "#2F9E78" },
-  { name: "Maly's Professional", short: "Maly's", color: "#5B8DB8" },
-  { name: "Armstrong McCall", short: "Armstrong", color: "#D89A2E" },
-  { name: "Cosmo Prof Group", short: "Cosmo Prof", color: "#9B6FB0" },
-  { name: "Beauty Systems Co.", short: "Beauty Sys", color: "#C9483B" },
-  { name: "Northern Salon Trade", short: "Northern", color: "#3F8E8C" },
+  { name: "Evolve",                                      short: "Evolve",       color: "#E8654F", code: "EVO" },
+  { name: "Uber Beauty",                                 short: "Uber Beauty",  color: "#2F9E78", code: "UBE" },
+  { name: "Salon Service Group",                         short: "SSG",          color: "#5B8DB8", code: "SSG" },
+  { name: "International Beauty Services & Supplies",    short: "Int'l Beauty", color: "#D89A2E", code: "INT" },
+  { name: "West Coast Beauty",                           short: "West Coast",   color: "#9B6FB0", code: "WES" },
+  { name: "Salon Services Pro",                          short: "SS Pro",       color: "#C9483B", code: "SSP" },
 ]
 
 export const MONTHS = [
@@ -268,9 +269,11 @@ function generateSalons(): Salon[] {
       let di: number
       const r = rand()
       if (st.abbr === "CA" || st.abbr === "WA" || st.abbr === "OR" || st.abbr === "NV") {
-        di = r < 0.55 ? 0 : Math.floor(rand() * DISTRIBUTORS.length)
+        // West Coast Beauty (index 4) dominates western US
+        di = r < 0.55 ? 4 : Math.floor(rand() * DISTRIBUTORS.length)
       } else if (["ON", "QC", "BC", "AB", "MB", "SK", "NS", "NB", "NL", "PE"].includes(st.abbr)) {
-        di = r < 0.6 ? 6 : Math.floor(rand() * DISTRIBUTORS.length)
+        // Int'l Beauty (index 3) dominates Canada
+        di = r < 0.6 ? 3 : Math.floor(rand() * DISTRIBUTORS.length)
       } else {
         di = Math.floor(rand() * DISTRIBUTORS.length)
       }

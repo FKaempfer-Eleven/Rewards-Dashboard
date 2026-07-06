@@ -29,12 +29,16 @@ const NAV: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
 export function Dashboard() {
   const [view, setView] = useState<ViewKey>("overview")
   const [search, setSearch] = useState("")
-  // bump a counter to signal the explorer to apply a quick query
   const [quickQuery, setQuickQuery] = useState<{ q: QuickQuery; nonce: number }>({
     q: null,
     nonce: 0,
   })
   const searchRef = useRef<HTMLInputElement>(null)
+  // Tracks cells confirmed-uploaded via the upload page: "di-mi"
+  const [uploadedCells, setUploadedCells] = useState<Set<string>>(new Set())
+  const handleCellUploaded = useCallback((di: number, mi: number) => {
+    setUploadedCells((prev) => new Set([...prev, `${di}-${mi}`]))
+  }, [])
 
   const runQuickQuery = useCallback((q: QuickQuery) => {
     setQuickQuery((prev) => ({ q, nonce: prev.nonce + 1 }))
@@ -133,7 +137,7 @@ export function Dashboard() {
 
           <div className="min-h-0 flex-1 overflow-y-auto px-[26px] py-[26px]">
             {view === "overview" && (
-              <OverviewView onQuickQuery={runQuickQuery} />
+              <OverviewView onQuickQuery={runQuickQuery} uploadedCells={uploadedCells} />
             )}
             {view === "salons" && (
               <SalonExplorerView
@@ -143,7 +147,7 @@ export function Dashboard() {
               />
             )}
             {view === "map" && <SalonMapView />}
-            {view === "upload" && <UploadView />}
+            {view === "upload" && <UploadView onCellUploaded={handleCellUploaded} />}
           </div>
         </div>
       </div>

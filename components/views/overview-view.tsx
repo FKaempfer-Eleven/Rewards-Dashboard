@@ -19,17 +19,21 @@ import {
   usdC,
 } from "@/lib/data"
 
+// Green = uploaded OK, Yellow = errors, Red = not uploaded, Amber = processing
 const STATUS_CLASS: Record<number, string> = {
   2: "bg-gen-soft text-[#1f7256]",
   1: "bg-proc-soft text-[#9a6a12]",
-  3: "bg-err-soft text-coral-deep border border-[#f3c4b8] cursor-pointer hover:-translate-y-px hover:bg-[#f7cdbf] hover:shadow-[var(--shadow)]",
-  0: "bg-miss-soft text-faint",
+  3: "bg-[#fefce8] text-[#854d0e] border border-[#fde68a] cursor-pointer hover:-translate-y-px hover:bg-[#fef08a] hover:shadow-[var(--shadow)]",
+  0: "bg-err-soft text-coral-deep border border-[#f3c4b8]",
 }
+const UPLOADED_CLASS = "bg-gen-soft text-[#1f7256]"
 
 export function OverviewView({
   onQuickQuery,
+  uploadedCells = new Set(),
 }: {
   onQuickQuery: (q: QuickQuery) => void
+  uploadedCells?: Set<string>
 }) {
   const [curMonth, setCurMonth] = useState(MONTHS.length - 1)
   const [errTarget, setErrTarget] = useState<ErrTarget | null>(null)
@@ -138,8 +142,8 @@ export function OverviewView({
         <div className="flex flex-wrap gap-4 px-5 pb-1 pt-3.5 text-[12px] text-muted">
           <LegendItem className="bg-gen-soft border-[#bfe0d2]" label="Points generated" />
           <LegendItem className="bg-proc-soft border-[#e8d4a6]" label="Processing" />
-          <LegendItem className="bg-err-soft border-[#f3c4b8]" label="Errors — data missing" />
-          <LegendItem className="bg-miss-soft border-line" label="Not uploaded" />
+          <LegendItem className="bg-[#fefce8] border-[#fde68a]" label="Errors — data missing" />
+          <LegendItem className="bg-err-soft border-[#f3c4b8]" label="Not uploaded" />
         </div>
         <div className="overflow-x-auto px-5 pb-5 pt-1.5">
           <table className="w-full border-separate border-spacing-[3px]">
@@ -171,30 +175,35 @@ export function OverviewView({
                   </td>
                   {MATRIX[di].map((cell, mi) => {
                     const [st, err] = cell
+                    const wasUploaded = uploadedCells.has(`${di}-${mi}`)
+                    const effectiveSt = wasUploaded ? 2 : st
+                    const cellClass = wasUploaded ? UPLOADED_CLASS : STATUS_CLASS[st]
                     return (
                       <td key={mi} className="p-0">
                         <button
                           type="button"
-                          disabled={st !== 3}
-                          onClick={() => st === 3 && setErrTarget({ di, mi })}
+                          disabled={effectiveSt !== 3}
+                          onClick={() => effectiveSt === 3 && setErrTarget({ di, mi })}
                           title={`${d.short} · ${MONTHS[mi]} · ${
-                            st === 2
-                              ? "Generated"
-                              : st === 3
-                                ? `${err} records missing data`
-                                : st === 1
-                                  ? "Processing"
-                                  : "Not uploaded"
+                            wasUploaded
+                              ? "Uploaded via portal"
+                              : effectiveSt === 2
+                                ? "Generated"
+                                : effectiveSt === 3
+                                  ? `${err} records missing data`
+                                  : effectiveSt === 1
+                                    ? "Processing"
+                                    : "Not uploaded"
                           }`}
-                          className={`flex h-8 w-full min-w-[34px] items-center justify-center rounded-[7px] text-[11px] font-semibold tabular-nums transition-all ${STATUS_CLASS[st]} ${
+                          className={`flex h-8 w-full min-w-[34px] items-center justify-center rounded-[7px] text-[11px] font-semibold tabular-nums transition-all ${cellClass} ${
                             mi === curMonth ? "ring-1 ring-coral/40" : ""
                           }`}
                         >
-                          {st === 2 ? (
+                          {effectiveSt === 2 ? (
                             <CheckIcon />
-                          ) : st === 3 ? (
+                          ) : effectiveSt === 3 ? (
                             fmt(err)
-                          ) : st === 1 ? (
+                          ) : effectiveSt === 1 ? (
                             "•••"
                           ) : (
                             ""
