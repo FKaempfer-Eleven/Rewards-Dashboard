@@ -3,23 +3,8 @@
 import { useEffect, useRef, useState } from "react"
 import { X, Copy, Check, Mail, KeyRound, RefreshCw, TrendingUp, ShoppingBag, Sliders } from "lucide-react"
 
-import {
-  DISTRIBUTORS,
-  MONTHS,
-  SALON,
-  STATES,
-  type Salon,
-  accountNumber,
-  emailFor,
-  fmt,
-  isActive,
-  salonCity,
-  salonMonthlyHistory,
-  salonName,
-  salonOrders,
-  usd,
-  username,
-} from "@/lib/data"
+import { DISTRIBUTORS, fmt, usd, usdC } from "@/lib/data"
+import { type LiveSalon, lastPurchaseLabel } from "@/lib/live-salon"
 
 type Tab = "account" | "history" | "orders" | "adjust"
 
@@ -34,14 +19,13 @@ export function SalonDetailPanel({
   salon,
   onClose,
 }: {
-  salon: Salon | null
+  salon: LiveSalon | null
   onClose: () => void
 }) {
   const [tab, setTab] = useState<Tab>("account")
   const [visible, setVisible] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Animate in/out
   useEffect(() => {
     if (salon) {
       setTab("account")
@@ -51,7 +35,6 @@ export function SalonDetailPanel({
     }
   }, [salon])
 
-  // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
     window.addEventListener("keydown", handler)
@@ -60,14 +43,7 @@ export function SalonDetailPanel({
 
   if (!salon) return null
 
-  const name = salonName(salon)
-  const email = emailFor(salon)
-  const acct = accountNumber(salon)
-  const user = username(salon)
-  const active = isActive(salon)
-  const dist = DISTRIBUTORS[salon[SALON.dist]]
-  const state = STATES[salon[SALON.state]]
-  const city = salonCity(salon)
+  const dist = salon.distributorIdx >= 0 ? DISTRIBUTORS[salon.distributorIdx] : null
 
   return (
     <>
@@ -92,19 +68,25 @@ export function SalonDetailPanel({
             <div className="flex items-center gap-2">
               <span
                 className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
-                  active ? "bg-gen-soft text-[#1f7256]" : "bg-miss-soft text-muted"
+                  salon.isActive ? "bg-gen-soft text-[#1f7256]" : "bg-miss-soft text-muted"
                 }`}
               >
-                <i className="size-1.5 rounded-full" style={{ background: active ? "#2F9E78" : "#C8BBAE" }} />
-                {active ? "Active" : "Dormant"}
+                <i
+                  className="size-1.5 rounded-full"
+                  style={{ background: salon.isActive ? "#2F9E78" : "#C8BBAE" }}
+                />
+                {salon.isActive ? "Active" : "Dormant"}
               </span>
-              <span className="text-[11px] text-faint">{acct}</span>
+              <span className="text-[11px] text-faint">{salon.acctnumber ?? "—"}</span>
             </div>
             <h2 className="mt-1.5 font-display text-[22px] font-semibold leading-tight tracking-[0.3px] text-ink">
-              {name}
+              {salon.salonName}
             </h2>
             <p className="mt-0.5 text-[12.5px] text-muted">
-              {city}, {state.abbr} · {dist.name}
+              {salon.city && salon.state
+                ? `${salon.city}, ${salon.state}`
+                : salon.city || salon.state || "Location unknown"}
+              {dist && ` · ${dist.name}`}
             </p>
           </div>
           <button
@@ -125,9 +107,7 @@ export function SalonDetailPanel({
                 key={t.key}
                 onClick={() => setTab(t.key)}
                 className={`flex items-center gap-1.5 border-b-2 px-3 py-3 text-[12px] font-medium transition-colors ${
-                  on
-                    ? "border-coral text-coral"
-                    : "border-transparent text-muted hover:text-ink2"
+                  on ? "border-coral text-coral" : "border-transparent text-muted hover:text-ink2"
                 }`}
               >
                 <Icon className="size-3.5" strokeWidth={1.8} />
@@ -139,17 +119,17 @@ export function SalonDetailPanel({
 
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          {tab === "account" && <AccountTab salon={salon} name={name} email={email} acct={acct} user={user} />}
+          {tab === "account" && <AccountTab salon={salon} />}
           {tab === "history" && <HistoryTab salon={salon} />}
           {tab === "orders" && <OrdersTab salon={salon} />}
-          {tab === "adjust" && <AdjustTab salon={salon} name={name} />}
+          {tab === "adjust" && <AdjustTab salon={salon} />}
         </div>
       </div>
     </>
   )
 }
 
-// ---- Account Tab ----
+// ── Account Tab ────────────────────────────────────────────────────────────────
 
 function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false)
@@ -166,87 +146,46 @@ function CopyButton({ value }: { value: string }) {
   )
 }
 
-function Field({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function Field({ label, value }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
       <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.4px] text-muted">{label}</div>
-      <div className={`flex items-center rounded-[10px] border border-line bg-white px-3 py-2.5 text-[13px] text-ink ${mono ? "font-mono" : ""}`}>
+      <div className="flex items-center rounded-[10px] border border-line bg-white px-3 py-2.5 text-[13px] text-ink">
         <span className="flex-1 truncate">{value || <span className="text-faint italic">not set</span>}</span>
-        <CopyButton value={value} />
+        {value && <CopyButton value={value} />}
       </div>
     </div>
   )
 }
 
-function AccountTab({
-  salon,
-  name,
-  email,
-  acct,
-  user,
-}: {
-  salon: Salon
-  name: string
-  email: string
-  acct: string
-  user: string
-}) {
-  const [newPw, setNewPw] = useState("")
-  const [pwSaved, setPwSaved] = useState(false)
+function AccountTab({ salon }: { salon: LiveSalon }) {
   const [inviteSent, setInviteSent] = useState(false)
-
-  function savePw() {
-    if (!newPw.trim()) return
-    setPwSaved(true)
-    setNewPw("")
-    setTimeout(() => setPwSaved(false), 2500)
-  }
 
   function sendInvite() {
     setInviteSent(true)
     setTimeout(() => setInviteSent(false), 3000)
   }
 
+  const username = salon.email ? salon.email.split("@")[0] : ""
+
   return (
     <div className="space-y-5">
       <Section title="Account Details">
         <div className="grid gap-3">
-          <Field label="Salon name" value={name} />
-          <Field label="Account number" value={acct} mono />
-          <Field label="Username" value={user} mono />
-          <Field label="Email address" value={email || ""} />
-        </div>
-      </Section>
-
-      <Section title="Password">
-        <p className="mb-3 text-[12.5px] text-muted">
-          Manually set a new password for this account. The salon will be prompted to change it on next login.
-        </p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Enter new password"
-            value={newPw}
-            onChange={(e) => setNewPw(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && savePw()}
-            className="flex-1 rounded-[10px] border border-line bg-white px-3 py-2.5 text-[13px] text-ink outline-none focus:border-coral"
-          />
-          <button
-            onClick={savePw}
-            disabled={!newPw.trim()}
-            className="flex items-center gap-1.5 rounded-[10px] bg-ink px-4 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-ink2 disabled:opacity-40"
-          >
-            {pwSaved ? <Check className="size-3.5" /> : <KeyRound className="size-3.5" />}
-            {pwSaved ? "Saved" : "Set password"}
-          </button>
+          <Field label="Salon name" value={salon.salonName} />
+          <Field label="Contact name" value={salon.contactName} />
+          <Field label="Account number" value={salon.acctnumber ?? ""} />
+          <Field label="Email address" value={salon.email ?? ""} />
+          <Field label="Address" value={[salon.city, salon.state, salon.zip, salon.country].filter(Boolean).join(", ")} />
+          {username && <Field label="Portal username" value={username} />}
         </div>
       </Section>
 
       <Section title="Invite">
         <p className="mb-3 text-[12.5px] text-muted">
-          Resend the portal invitation email. The salon must accept the invite before they can access their account.
+          Resend the portal invitation email to this salon.
         </p>
-        {!email && (
+        {!salon.email && (
           <div className="mb-3 flex items-center gap-2 rounded-[10px] border border-err-soft bg-err-soft px-3 py-2.5 text-[12.5px] text-[#c9483b]">
             <Mail className="size-3.5 flex-none" />
             No email address on file — add one before sending an invite.
@@ -254,7 +193,7 @@ function AccountTab({
         )}
         <button
           onClick={sendInvite}
-          disabled={!email}
+          disabled={!salon.email}
           className="flex items-center gap-2 rounded-[10px] border border-line bg-paper2 px-4 py-2.5 text-[13px] font-medium text-ink transition-colors hover:border-coral hover:text-coral disabled:opacity-40"
         >
           {inviteSent ? <Check className="size-3.5 text-gen" /> : <RefreshCw className="size-3.5" />}
@@ -265,118 +204,76 @@ function AccountTab({
   )
 }
 
-// ---- Points History Tab ----
+// ── History Tab ────────────────────────────────────────────────────────────────
 
-function HistoryTab({ salon }: { salon: Salon }) {
-  const history = salonMonthlyHistory(salon)
-  const totalPurchases = history.reduce((a, r) => a + r.purchases, 0)
-  const totalPoints = history.reduce((a, r) => a + r.pointsEarned, 0)
-  const activeMonths = history.filter((r) => r.purchases > 0).length
+function HistoryTab({ salon }: { salon: LiveSalon }) {
+  const redemptionRate =
+    salon.lifetimePointsIssued > 0
+      ? ((salon.lifetimePointsRedeemed / salon.lifetimePointsIssued) * 100).toFixed(1)
+      : "0"
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-3 gap-3">
-        <StatCard label="Active months" value={String(activeMonths)} />
-        <StatCard label="Total purchases" value={usd(totalPurchases)} />
-        <StatCard label="Total points earned" value={fmt(totalPoints)} />
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Months on program" value={String(salon.monthCount)} />
+        <StatCard label="Lifetime sales" value={usdC(salon.lifetimeSales)} />
+        <StatCard label="Points issued" value={fmt(salon.lifetimePointsIssued)} />
+        <StatCard label="Points redeemed" value={fmt(salon.lifetimePointsRedeemed)} />
       </div>
 
-      <Section title="Monthly Breakdown">
-        <div className="overflow-hidden rounded-[10px] border border-line">
-          <table className="w-full border-collapse text-[13px]">
-            <thead>
-              <tr className="border-b border-line bg-paper2">
-                <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.5px] text-muted">Month</th>
-                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.5px] text-muted">Purchases</th>
-                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.5px] text-muted">Points Earned</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((row, i) => (
-                <tr key={i} className={`border-b border-line2 ${row.purchases === 0 ? "text-faint" : ""}`}>
-                  <td className="px-4 py-2.5 font-medium">{row.month}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">
-                    {row.purchases > 0 ? usd(row.purchases) : "—"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums">
-                    {row.pointsEarned > 0 ? fmt(row.pointsEarned) : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-line bg-paper2 font-semibold">
-                <td className="px-4 py-2.5 text-[11px] uppercase tracking-[0.4px] text-muted">Total</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{usd(totalPurchases)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{fmt(totalPoints)}</td>
-              </tr>
-            </tfoot>
-          </table>
+      <Section title="Summary">
+        <div className="space-y-2.5 rounded-[10px] border border-line bg-white p-4 text-[13px]">
+          <Row label="Average monthly spend" value={usd(salon.avgMonthlySales)} />
+          <Row label="Redemption rate" value={`${redemptionRate}% of issued`} />
+          <Row label="Points balance" value={fmt(salon.pointsBalance)} />
+          <Row label="Last purchase" value={lastPurchaseLabel(salon.lastPurchase)} />
+          <Row
+            label="Status"
+            value={salon.isActive ? "Active (purchased in last 12 mo)" : "Dormant (no recent purchase)"}
+          />
         </div>
       </Section>
     </div>
   )
 }
 
-// ---- Orders Tab ----
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-line2 pb-2 last:border-0 last:pb-0">
+      <span className="text-muted">{label}</span>
+      <span className="font-medium tabular-nums text-ink">{value}</span>
+    </div>
+  )
+}
 
-function OrdersTab({ salon }: { salon: Salon }) {
-  const orders = salonOrders(salon)
-  const totalRedeemed = orders.reduce((a, o) => a + o.pointsRedeemed, 0)
+// ── Orders Tab ─────────────────────────────────────────────────────────────────
 
+function OrdersTab({ salon }: { salon: LiveSalon }) {
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-3 gap-3">
-        <StatCard label="Total orders" value={String(orders.length)} />
-        <StatCard label="Total spent" value={usd(orders.reduce((a, o) => a + o.amount, 0))} />
-        <StatCard label="Points redeemed" value={fmt(totalRedeemed)} />
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Total redeemed" value={fmt(salon.lifetimePointsRedeemed)} />
+        <StatCard label="Points balance" value={fmt(salon.pointsBalance)} />
       </div>
 
       <Section title="Order History">
-        <div className="space-y-2">
-          {orders.map((order) => (
-            <div
-              key={order.id}
-              className="flex items-center justify-between rounded-[10px] border border-line bg-white px-4 py-3"
-            >
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[12px] font-medium text-ink">{order.id}</span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10.5px] font-medium ${
-                      order.status === "Completed"
-                        ? "bg-gen-soft text-[#1f7256]"
-                        : order.status === "Refunded"
-                          ? "bg-err-soft text-[#c9483b]"
-                          : "bg-proc-soft text-[#b07c18]"
-                    }`}
-                  >
-                    {order.status}
-                  </span>
-                </div>
-                <div className="mt-0.5 text-[11.5px] text-muted">
-                  {order.date} · {order.items} item{order.items !== 1 ? "s" : ""}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="font-medium tabular-nums text-ink">{usd(order.amount)}</div>
-                {order.pointsRedeemed > 0 && (
-                  <div className="text-[11.5px] text-coral">
-                    −{fmt(order.pointsRedeemed)} pts
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+        <div className="flex items-center justify-center rounded-[10px] border border-line bg-white px-4 py-10 text-center text-[13px] text-faint">
+          <div>
+            <ShoppingBag className="mx-auto mb-3 size-8 text-line" strokeWidth={1.2} />
+            <p className="font-medium text-muted">Live order history coming soon</p>
+            <p className="mt-1 text-[12px]">
+              Orders will be pulled from Dataverse once the full API layer is connected.
+            </p>
+          </div>
         </div>
       </Section>
     </div>
   )
 }
 
-// ---- Adjust Tab ----
+// ── Adjust Tab ─────────────────────────────────────────────────────────────────
 
-function AdjustTab({ salon, name }: { salon: Salon; name: string }) {
+function AdjustTab({ salon }: { salon: LiveSalon }) {
   const [pointsAdj, setPointsAdj] = useState("")
   const [adjReason, setAdjReason] = useState("")
   const [adjDone, setAdjDone] = useState<"add" | "remove" | null>(null)
@@ -400,20 +297,20 @@ function AdjustTab({ salon, name }: { salon: Salon; name: string }) {
     setTimeout(() => setRefundDone(false), 2500)
   }
 
-  const currentPoints = fmt(salon[SALON.points])
-
   return (
     <div className="space-y-5">
       <Section title="Points Balance">
         <div className="flex items-center justify-between rounded-[10px] border border-line bg-white px-4 py-3">
           <span className="text-[13px] text-muted">Current balance</span>
-          <span className="font-display text-[20px] font-semibold tabular-nums text-ink">{currentPoints} pts</span>
+          <span className="font-display text-[20px] font-semibold tabular-nums text-ink">
+            {fmt(salon.pointsBalance)} pts
+          </span>
         </div>
       </Section>
 
       <Section title="Manual Points Adjustment">
         <p className="mb-3 text-[12.5px] text-muted">
-          Add or remove points from {name}&apos;s balance. All adjustments are logged.
+          Add or remove points from {salon.salonName}&apos;s balance. All adjustments are logged.
         </p>
         <div className="space-y-2.5">
           <input
@@ -487,7 +384,7 @@ function AdjustTab({ salon, name }: { salon: Salon; name: string }) {
   )
 }
 
-// ---- Shared helpers ----
+// ── Shared helpers ─────────────────────────────────────────────────────────────
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
