@@ -32,14 +32,14 @@ function buildFetchXml(page: number, cookie?: string): string {
     <attribute name="address1_postalcode" groupby="true" alias="zip"/>
     <attribute name="address1_country" groupby="true" alias="country"/>
     <link-entity name="dom_rewardpointsheader" from="dom_distributorsalon" to="contactid" link-type="inner" alias="h">
+      <attribute name="dom_acctnumber" groupby="true" alias="acctnumber"/>
       <attribute name="dom_monthlysalontotalsales" aggregate="sum" alias="lifetimeSales"/>
       <attribute name="dom_monthlysaloncarepoints" aggregate="sum" alias="carePts"/>
       <attribute name="dom_monthlysaloncolorpoints" aggregate="sum" alias="colorPts"/>
       <attribute name="dom_monthlysalontotalpoints_redeemed" aggregate="sum" alias="redeemed"/>
       <attribute name="dom_monthlysalontotalpointsremaining" aggregate="sum" alias="pointsBalance"/>
       <attribute name="dom_rewardpointsheaderid" aggregate="count" alias="monthCount"/>
-      <attribute name="dom_salonsalesfrom" aggregate="max" alias="lastPurchase"/>
-      <attribute name="dom_acctnumber" aggregate="max" alias="acctnumber"/>
+      <attribute name="createdon" aggregate="max" alias="lastPurchase"/>
       <filter type="or">
         <condition attribute="dom_acctnumber" operator="begins-with" value="EVO-"/>
         <condition attribute="dom_acctnumber" operator="begins-with" value="UBE-"/>
@@ -85,7 +85,42 @@ async function fetchAllFromDataverse(): Promise<LiveSalon[]> {
     page++
   }
 
-  return all
+  // Deduplicate: a salon that switched distributors produces one row per acctnumber.
+  // Merge rows with the same contactid, summing financials and keeping the most
+  // recent acctnumber (highest lastPurchase).
+  const byId = new Map<string, LiveSalon>()
+  for (const s of all) {
+    const existing = byId.get(s.id)
+    if (!existing) {
+      byId.set(s.id, s)
+    } else {
+      // Keep whichever acctnumber belongs to the more recent record
+      const useNew =
+        (s.lastPurchase ?? "") > (existing.lastPurchase ?? "")
+      byId.set(s.id, {
+        ...existing,
+        acctnumber: useNew ? s.acctnumber : existing.acctnumber,
+        distributorCode: useNew ? s.distributorCode : existing.distributorCode,
+        distributorIdx: useNew ? s.distributorIdx : existing.distributorIdx,
+        lifetimeSales: existing.lifetimeSales + s.lifetimeSales,
+        lifetimePointsIssued: existing.lifetimePointsIssued + s.lifetimePointsIssued,
+        lifetimePointsRedeemed: existing.lifetimePointsRedeemed + s.lifetimePointsRedeemed,
+        pointsBalance: existing.pointsBalance + s.pointsBalance,
+        monthCount: existing.monthCount + s.monthCount,
+        lastPurchase: useNew ? s.lastPurchase : existing.lastPurchase,
+        isActive: existing.isActive || s.isActive,
+        avgMonthlySales: 0, // recalculated below
+      })
+    }
+  }
+
+  // Recalculate avgMonthlySales after merging
+  const merged = Array.from(byId.values()).map((s) => ({
+    ...s,
+    avgMonthlySales: s.monthCount > 0 ? s.lifetimeSales / s.monthCount : 0,
+  }))
+
+  return merged
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
