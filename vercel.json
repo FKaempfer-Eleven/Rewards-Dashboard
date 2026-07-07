@@ -1,7 +1,8 @@
 {
+  "regions": ["cdg1"],
   "crons": [
     {
-      "path": "/api/warmup",
+      "path": "/api/sync",
       "schedule": "0 6 * * *"
     }
   ]

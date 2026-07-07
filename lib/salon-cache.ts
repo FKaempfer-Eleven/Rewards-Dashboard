@@ -1,25 +1,83 @@
-// Salon aggregate cache backed by Next.js Data Cache (unstable_cache).
-// On Vercel, this persists across serverless invocations — unlike a plain
-// module-level variable which resets on every cold start.
+// Salon data backed by Supabase — fast reads (~5ms), no Dataverse on the hot path.
 //
-// Cache TTL: 1 hour.  Tag: "salons" — call revalidateTag("salons") from a
-// Server Action or Route Handler to force an early refresh (e.g. after upload).
+// Data flow:
+//   Dataverse ──[daily cron]──▶ /api/sync ──▶ Supabase salon_cache
+//   API routes ──────────────▶ getAllSalons() ──▶ Supabase (instant)
+//
+// unstable_cache wraps the Supabase read to reduce DB calls under load (5-min TTL).
+// Call revalidateTag(SALON_CACHE_TAG) after a sync to flush immediately.
 
 import { unstable_cache } from "next/cache"
 import { dvFetch } from "./dataverse-client"
-import { mapRowToLiveSalon, type LiveSalon } from "./live-salon"
+import { mapRowToLiveSalon, isSalonActive, type LiveSalon } from "./live-salon"
 
 export const SALON_CACHE_TAG = "salons"
 
-// ── FetchXML builder ──────────────────────────────────────────────────────────
+// ── Supabase row → LiveSalon ──────────────────────────────────────────────────
 
-function buildFetchXml(page: number, cookie?: string): string {
+export function mapSupabaseRow(row: Record<string, unknown>): LiveSalon {
+  const lastPurchase = row.last_purchase
+    ? new Date(row.last_purchase as string).toISOString()
+    : null
+  return {
+    id: row.id as string,
+    rawName: (row.raw_name as string) ?? "",
+    salonName: (row.salon_name as string) ?? "",
+    contactName: (row.contact_name as string) ?? "",
+    email: (row.email as string | null) ?? null,
+    city: (row.city as string | null) ?? null,
+    state: (row.state as string | null) ?? null,
+    zip: (row.zip as string | null) ?? null,
+    country: (row.country as string | null) ?? null,
+    acctnumber: (row.acct_number as string | null) ?? null,
+    distributorCode: (row.distributor_code as string | null) ?? null,
+    distributorIdx: Number(row.distributor_idx ?? -1),
+    lifetimeSales: Number(row.lifetime_sales ?? 0),
+    lifetimePointsIssued: Number(row.lifetime_points_issued ?? 0),
+    lifetimePointsRedeemed: Number(row.lifetime_points_redeemed ?? 0),
+    pointsBalance: Number(row.points_balance ?? 0),
+    monthCount: Number(row.month_count ?? 0),
+    lastPurchase,
+    isActive: Boolean(row.is_active),
+    avgMonthlySales: Number(row.avg_monthly_sales ?? 0),
+  }
+}
+
+// ── Supabase reader ───────────────────────────────────────────────────────────
+
+async function fetchSalonsFromSupabase(): Promise<LiveSalon[]> {
+  // Lazy-import to avoid initialisation errors when env vars not set at build time
+  const { supabase } = await import("./supabase-client")
+
+  const { data, error } = await supabase
+    .from("salon_cache")
+    .select("*")
+    .order("lifetime_sales", { ascending: false })
+
+  if (error) throw new Error(`Supabase read failed: ${error.message}`)
+  return (data ?? []).map(mapSupabaseRow)
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Returns all salons from Supabase (pre-synced from Dataverse).
+ * Reads are cached for 5 minutes in Vercel's Data Cache.
+ * Flush immediately via revalidateTag(SALON_CACHE_TAG).
+ */
+export const getAllSalons = unstable_cache(
+  fetchSalonsFromSupabase,
+  ["salon-aggregate-data"],
+  { revalidate: 300, tags: [SALON_CACHE_TAG] }
+)
+
+// ── Dataverse fetcher (used by /api/sync only) ────────────────────────────────
+
+function buildFullFetchXml(page: number, cookie?: string): string {
   const cookieAttr = cookie
     ? ` paging-cookie="${cookie.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"`
     : ""
 
-  // dom_acctnumber is nvarchar — MAX not supported; use groupby instead.
-  // createdon is a system DateTime field that supports MAX aggregate.
   return `<fetch aggregate="true" page="${page}" count="5000"${cookieAttr} no-lock="true">
   <entity name="contact">
     <attribute name="contactid" groupby="true" alias="id"/>
@@ -51,19 +109,22 @@ function buildFetchXml(page: number, cookie?: string): string {
 </fetch>`
 }
 
-// ── Fetcher ───────────────────────────────────────────────────────────────────
-
-async function fetchAllFromDataverse(): Promise<LiveSalon[]> {
+/**
+ * Fetches ALL salons from Dataverse via aggregate FetchXML.
+ * Used by /api/sync for the initial full population.
+ * WARNING: Takes 60+ seconds on Vercel — run locally or via a long-running job.
+ */
+export async function fetchAllFromDataverse(): Promise<LiveSalon[]> {
   const all: LiveSalon[] = []
   let page = 1
   let cookie: string | undefined
 
   for (;;) {
-    const xml = buildFetchXml(page, cookie)
+    const xml = buildFullFetchXml(page, cookie)
     const res = await dvFetch(`/contacts?fetchXml=${encodeURIComponent(xml)}`)
 
     if (!res.ok) {
-      throw new Error(`Salon cache fetch failed (page ${page}): ${await res.text()}`)
+      throw new Error(`Dataverse fetch failed (page ${page}): ${await res.text()}`)
     }
 
     const data = (await res.json()) as {
@@ -83,9 +144,7 @@ async function fetchAllFromDataverse(): Promise<LiveSalon[]> {
     page++
   }
 
-  // Deduplicate: a salon that switched distributors produces one row per acctnumber.
-  // Merge rows with the same contactid, summing financials and keeping the most
-  // recent acctnumber (highest lastPurchase).
+  // Deduplicate: salons that switched distributors produce one row per acctnumber.
   const byId = new Map<string, LiveSalon>()
   for (const s of all) {
     const existing = byId.get(s.id)
@@ -115,16 +174,3 @@ async function fetchAllFromDataverse(): Promise<LiveSalon[]> {
     avgMonthlySales: s.monthCount > 0 ? s.lifetimeSales / s.monthCount : 0,
   }))
 }
-
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/**
- * Returns all salons from Next.js Data Cache (Vercel-persisted, 1-hour TTL).
- * On cache miss this fetches ~5k records from Dataverse (~10-15s).
- * On cache hit this returns instantly from Vercel's CDN data layer.
- */
-export const getAllSalons = unstable_cache(
-  fetchAllFromDataverse,
-  ["salon-aggregate-data"],
-  { revalidate: 3600, tags: [SALON_CACHE_TAG] }
-)
