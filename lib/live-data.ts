@@ -4,8 +4,10 @@
 
 import type { TimePoint } from "./data"
 
-/** Distinct salon records with a recognised distributor prefix. */
-export const LIVE_SALON_COUNT = 30_232
+/** Distinct salon records with a recognised distributor prefix.
+ *  NOTE: 30,232 was the header record count (monthly uploads), not unique salons.
+ *  Actual unique salon count is populated from Supabase salon_cache after sync. */
+export const LIVE_SALON_COUNT = 30_232 // TODO: replace with live Supabase count
 
 /** Lifetime distributor sales tracked in Dataverse (USD). */
 export const LIVE_LIFETIME_SALES = 8_923_213.60

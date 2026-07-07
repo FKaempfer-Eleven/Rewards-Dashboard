@@ -10,8 +10,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { revalidateTag } from "next/cache"
 import { dvFetch } from "@/lib/dataverse-client"
-import { mapRowToLiveSalon, type LiveSalon } from "@/lib/live-salon"
-import { SALON_CACHE_TAG, fetchAllFromDataverse, mapSupabaseRow } from "@/lib/salon-cache"
+import { type LiveSalon } from "@/lib/live-salon"
+import {
+  SALON_CACHE_TAG,
+  fetchAllFromDataverse,
+  fetchSalonsByIds,
+} from "@/lib/salon-cache"
 
 export const maxDuration = 60
 
@@ -53,46 +57,6 @@ function buildChangedIdsFetchXml(since: string, page: number, cookie?: string): 
 </fetch>`
 }
 
-// ── FetchXML for aggregate data of specific contact IDs ───────────────────────
-
-function buildByIdsFetchXml(ids: string[]): string {
-  const inValues = ids.map((id) => `<value>${id}</value>`).join("\n        ")
-  return `<fetch aggregate="true" no-lock="true">
-  <entity name="contact">
-    <attribute name="contactid" groupby="true" alias="id"/>
-    <attribute name="fullname" groupby="true" alias="rawName"/>
-    <attribute name="emailaddress1" groupby="true" alias="email"/>
-    <attribute name="address1_city" groupby="true" alias="city"/>
-    <attribute name="address1_stateorprovince" groupby="true" alias="state"/>
-    <attribute name="address1_postalcode" groupby="true" alias="zip"/>
-    <attribute name="address1_country" groupby="true" alias="country"/>
-    <filter>
-      <condition attribute="contactid" operator="in">
-        ${inValues}
-      </condition>
-    </filter>
-    <link-entity name="dom_rewardpointsheader" from="dom_distributorsalon" to="contactid" link-type="inner" alias="h">
-      <attribute name="dom_acctnumber" groupby="true" alias="acctnumber"/>
-      <attribute name="dom_monthlysalontotalsales" aggregate="sum" alias="lifetimeSales"/>
-      <attribute name="dom_monthlysaloncarepoints" aggregate="sum" alias="carePts"/>
-      <attribute name="dom_monthlysaloncolorpoints" aggregate="sum" alias="colorPts"/>
-      <attribute name="dom_monthlysalontotalpoints_redeemed" aggregate="sum" alias="redeemed"/>
-      <attribute name="dom_monthlysalontotalpointsremaining" aggregate="sum" alias="pointsBalance"/>
-      <attribute name="dom_rewardpointsheaderid" aggregate="count" alias="monthCount"/>
-      <attribute name="createdon" aggregate="max" alias="lastPurchase"/>
-      <filter type="or">
-        <condition attribute="dom_acctnumber" operator="begins-with" value="EVO-"/>
-        <condition attribute="dom_acctnumber" operator="begins-with" value="UBE-"/>
-        <condition attribute="dom_acctnumber" operator="begins-with" value="SSG-"/>
-        <condition attribute="dom_acctnumber" operator="begins-with" value="INT-"/>
-        <condition attribute="dom_acctnumber" operator="begins-with" value="WES-"/>
-        <condition attribute="dom_acctnumber" operator="begins-with" value="SSP-"/>
-      </filter>
-    </link-entity>
-  </entity>
-</fetch>`
-}
-
 // ── Dataverse helpers ─────────────────────────────────────────────────────────
 
 async function fetchChangedContactIds(since: string): Promise<string[]> {
@@ -119,59 +83,12 @@ async function fetchChangedContactIds(since: string): Promise<string[]> {
     }
 
     if (!data["@Microsoft.Dynamics.CRM.morerecords"] || (data.value ?? []).length === 0) break
-    cookie = data["@Microsoft.Dynamics.CRM.fetchxmlpagingcookie"]
+    const rawCookie = data["@Microsoft.Dynamics.CRM.fetchxmlpagingcookie"] as string | undefined
+    cookie = rawCookie ? decodeURIComponent(rawCookie) : undefined
     page++
   }
 
   return Array.from(ids)
-}
-
-async function fetchSalonsByIds(ids: string[]): Promise<LiveSalon[]> {
-  if (ids.length === 0) return []
-
-  // Batch into chunks of 200 to keep FetchXML manageable
-  const CHUNK = 200
-  const all: LiveSalon[] = []
-
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const chunk = ids.slice(i, i + CHUNK)
-    const xml = buildByIdsFetchXml(chunk)
-    const res = await dvFetch(`/contacts?fetchXml=${encodeURIComponent(xml)}`)
-    if (!res.ok) throw new Error(`Salon by-IDs fetch failed: ${await res.text()}`)
-    const data = (await res.json()) as { value: Record<string, unknown>[] }
-    for (const row of data.value ?? []) {
-      all.push(mapRowToLiveSalon(row))
-    }
-  }
-
-  // Deduplicate (same logic as fetchAllFromDataverse)
-  const byId = new Map<string, LiveSalon>()
-  for (const s of all) {
-    const existing = byId.get(s.id)
-    if (!existing) {
-      byId.set(s.id, s)
-    } else {
-      const useNew = (s.lastPurchase ?? "") > (existing.lastPurchase ?? "")
-      byId.set(s.id, {
-        ...existing,
-        acctnumber: useNew ? s.acctnumber : existing.acctnumber,
-        distributorCode: useNew ? s.distributorCode : existing.distributorCode,
-        distributorIdx: useNew ? s.distributorIdx : existing.distributorIdx,
-        lifetimeSales: existing.lifetimeSales + s.lifetimeSales,
-        lifetimePointsIssued: existing.lifetimePointsIssued + s.lifetimePointsIssued,
-        lifetimePointsRedeemed: existing.lifetimePointsRedeemed + s.lifetimePointsRedeemed,
-        pointsBalance: existing.pointsBalance + s.pointsBalance,
-        monthCount: existing.monthCount + s.monthCount,
-        lastPurchase: useNew ? s.lastPurchase : existing.lastPurchase,
-        isActive: existing.isActive || s.isActive,
-        avgMonthlySales: 0,
-      })
-    }
-  }
-  return Array.from(byId.values()).map((s) => ({
-    ...s,
-    avgMonthlySales: s.monthCount > 0 ? s.lifetimeSales / s.monthCount : 0,
-  }))
 }
 
 // ── Supabase helpers ──────────────────────────────────────────────────────────
@@ -249,18 +166,21 @@ export async function GET(req: NextRequest) {
   try {
     // ── Full sync ─────────────────────────────────────────────────────────────
     if (mode === "full") {
-      const salons = await fetchAllFromDataverse()
+      const { salons, phase1Pages, phase1HeaderRows, phase1UniqueIds, phase2Batches } =
+        await fetchAllFromDataverse()
       await upsertSalons(salons)
       await updateSyncMeta({
         lastFullSync: new Date().toISOString(),
         lastDeltaSync: new Date().toISOString(),
         salonCount: salons.length,
       })
-      revalidateTag(SALON_CACHE_TAG)
+      revalidateTag(SALON_CACHE_TAG, "default")
       return NextResponse.json({
         ok: true,
         mode: "full",
         count: salons.length,
+        phase1: { pages: phase1Pages, headerRows: phase1HeaderRows, uniqueIds: phase1UniqueIds },
+        phase2: { batches: phase2Batches },
         ms: Date.now() - start,
       })
     }
@@ -324,7 +244,7 @@ export async function GET(req: NextRequest) {
     const salons = await fetchSalonsByIds(changedIds)
     await upsertSalons(salons)
     await updateSyncMeta({ lastDeltaSync: new Date().toISOString() })
-    revalidateTag(SALON_CACHE_TAG)
+    revalidateTag(SALON_CACHE_TAG, "default")
 
     return NextResponse.json({
       ok: true,
