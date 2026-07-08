@@ -136,8 +136,12 @@ async function fetchAllDistributorContactIds(): Promise<{
     }
 
     for (const row of data.value ?? []) {
-      // dom_distributorsalon is a lookup — FetchXML returns the GUID directly
-      const id = (row["dom_distributorsalon"] as string | undefined)?.trim()
+      // Dataverse OData FetchXML returns lookup GUIDs under _fieldname_value
+      // Fall back to the plain name in case the schema differs
+      const id = (
+        (row["_dom_distributorsalon_value"] as string | undefined) ??
+        (row["dom_distributorsalon"] as string | undefined)
+      )?.trim()
       if (id) ids.add(id)
     }
 

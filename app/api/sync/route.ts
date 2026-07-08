@@ -81,7 +81,10 @@ async function fetchChangedContactIds(since: string): Promise<string[]> {
     }
 
     for (const row of data.value ?? []) {
-      const id = row["dom_distributorsalon"] as string | undefined
+      const id = (
+        (row["_dom_distributorsalon_value"] as string | undefined) ??
+        (row["dom_distributorsalon"] as string | undefined)
+      )?.trim()
       if (id) ids.add(id)
     }
 
@@ -216,7 +219,9 @@ export async function GET(req: NextRequest) {
       const res = await dvFetch(`/dom_rewardpointsheaders?fetchXml=${encodeURIComponent(xml)}`)
       const data = (await res.json()) as { value: Record<string, unknown>[] }
       const activeIds = new Set(
-        (data.value ?? []).map((r) => r["dom_distributorsalon"] as string).filter(Boolean)
+        (data.value ?? []).map((r) =>
+          ((r["_dom_distributorsalon_value"] ?? r["dom_distributorsalon"]) as string | undefined)?.trim()
+        ).filter(Boolean) as string[]
       )
 
       const toDelete = [...cachedIds].filter((id) => !activeIds.has(id))
