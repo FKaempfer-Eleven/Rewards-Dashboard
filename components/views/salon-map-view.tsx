@@ -36,12 +36,13 @@ type MapSalon = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Deterministic jitter from GUID: same salon always at same position. */
-function jitteredCoords(id: string, lat: number, lon: number): [number, number] {
+/** Deterministic jitter from GUID: same salon always at same position.
+ *  spread is the STATE_GEO spread value — larger provinces/states get wider scatter. */
+function jitteredCoords(id: string, lat: number, lon: number, spread: number): [number, number] {
   let h = 0
   for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0
-  const jLat = ((h & 0xff) / 255 - 0.5) * 3.0        // ±1.5° lat
-  const jLon = (((h >> 8) & 0xff) / 255 - 0.5) * 5.0  // ±2.5° lon
+  const jLat = ((h & 0xff) / 255 - 0.5) * spread * 1.2        // e.g. ±1.44° for CT, ±3.6° for BC
+  const jLon = (((h >> 8) & 0xff) / 255 - 0.5) * spread * 1.8 // wider E-W than N-S
   return [lon + jLon, lat + jLat]
 }
 
@@ -123,7 +124,7 @@ export function SalonMapView() {
   // Pins with jittered coordinates
   const pins = useMemo(() => {
     if (activeState === null || !STATES[activeState]) return []
-    const { lat, lon } = STATES[activeState]
+    const { lat, lon, spread } = STATES[activeState]
     let list = activeSalons
     if (distToggle.size > 0) list = list.filter((s) => distToggle.has(s.distributorIdx))
     // Cap at 900 pins for perf
@@ -133,7 +134,7 @@ export function SalonMapView() {
       for (let k = 0; k < list.length; k += step) out.push(list[Math.floor(k)])
       list = out
     }
-    return list.map((s) => ({ ...s, coords: jitteredCoords(s.id, lat, lon) }))
+    return list.map((s) => ({ ...s, coords: jitteredCoords(s.id, lat, lon, spread) }))
   }, [activeState, activeSalons, distToggle])
 
   const pinR = Math.max(1.2, Math.min(4, 5 / zoom))

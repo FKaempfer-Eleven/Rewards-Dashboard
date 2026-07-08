@@ -88,6 +88,9 @@ const DISTRIBUTOR_FILTER = `
         <condition attribute="dom_acctnumber" operator="begins-with" value="INT-"/>
         <condition attribute="dom_acctnumber" operator="begins-with" value="WES-"/>
         <condition attribute="dom_acctnumber" operator="begins-with" value="SSP-"/>
+        <condition attribute="dom_acctnumber" operator="begins-with" value="PRE-"/>
+        <condition attribute="dom_acctnumber" operator="begins-with" value="TOR-"/>
+        <condition attribute="dom_acctnumber" operator="begins-with" value="LIQ-"/>
       </filter>`
 
 // ── Phase 1: collect all contactids via dom_rewardpointsheader (non-distinct) ─

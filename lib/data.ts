@@ -19,6 +19,8 @@ export type StateInfo = {
   /** longitude/latitude centroid for bubbles + pins */
   lon: number
   lat: number
+  /** how widely to scatter pins when drilling into this state/province (degrees) */
+  spread: number
 }
 
 // Salon stored as a compact tuple to keep the dataset light.
@@ -68,6 +70,9 @@ export const DISTRIBUTORS: Distributor[] = [
   { name: "International Beauty Services & Supplies",    short: "Int'l Beauty", color: "#D89A2E", code: "INT" },
   { name: "West Coast Beauty",                           short: "West Coast",   color: "#9B6FB0", code: "WES" },
   { name: "Salon Services Pro",                          short: "SS Pro",       color: "#C9483B", code: "SSP" },
+  { name: "Premier Beauty Supply",                       short: "Premier",      color: "#3A8C9E", code: "PRE" },
+  { name: "Kevin Murphy Canada East",                    short: "KM Canada",    color: "#7B9E3A", code: "TOR" },
+  { name: "Liquid Assets LLC",                           short: "Liquid",       color: "#A05C8C", code: "LIQ" },
 ]
 
 export const MONTHS = [
@@ -91,6 +96,7 @@ export const STATES: StateInfo[] = STATE_GEO.map((g: StateGeo) => ({
   abbr: g.abbr,
   lon: g.lon,
   lat: g.lat,
+  spread: g.spread,
 }))
 
 export const STATE_INDEX: Record<string, number> = {}

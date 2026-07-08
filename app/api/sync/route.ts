@@ -51,6 +51,9 @@ function buildChangedIdsFetchXml(since: string, page: number, cookie?: string): 
         <condition attribute="dom_acctnumber" operator="begins-with" value="INT-"/>
         <condition attribute="dom_acctnumber" operator="begins-with" value="WES-"/>
         <condition attribute="dom_acctnumber" operator="begins-with" value="SSP-"/>
+        <condition attribute="dom_acctnumber" operator="begins-with" value="PRE-"/>
+        <condition attribute="dom_acctnumber" operator="begins-with" value="TOR-"/>
+        <condition attribute="dom_acctnumber" operator="begins-with" value="LIQ-"/>
       </filter>
     </filter>
   </entity>
@@ -204,6 +207,9 @@ export async function GET(req: NextRequest) {
       <condition attribute="dom_acctnumber" operator="begins-with" value="INT-"/>
       <condition attribute="dom_acctnumber" operator="begins-with" value="WES-"/>
       <condition attribute="dom_acctnumber" operator="begins-with" value="SSP-"/>
+      <condition attribute="dom_acctnumber" operator="begins-with" value="PRE-"/>
+      <condition attribute="dom_acctnumber" operator="begins-with" value="TOR-"/>
+      <condition attribute="dom_acctnumber" operator="begins-with" value="LIQ-"/>
     </filter>
   </entity>
 </fetch>`
