@@ -26,8 +26,9 @@ export async function GET(req: NextRequest) {
   const distCodes = (sp.get("distributor") ?? "").split(",").filter(Boolean)
   const state     = (sp.get("state") ?? "").trim().toUpperCase()
   const minSpend  = Number(sp.get("minSpend") ?? 0)
-  const activeOnly   = sp.get("activeOnly") === "true"
-  const noEmailOnly  = sp.get("noEmailOnly") === "true"
+  const activeOnly        = sp.get("activeOnly") === "true"
+  const noEmailOnly       = sp.get("noEmailOnly") === "true"
+  const excludeZeroSpend  = sp.get("excludeZeroSpend") === "true"
   const sortKey   = (sp.get("sort") ?? "sales") as SortKey
   const dir       = sp.get("dir") === "asc"
   const col       = SORT_COL[sortKey] ?? "lifetime_sales"
@@ -42,6 +43,10 @@ export async function GET(req: NextRequest) {
     if (minSpend > 0) q = q.gte("lifetime_sales", minSpend)
     if (activeOnly) q = q.eq("is_active", true)
     if (noEmailOnly) q = q.is("email", null)
+    if (excludeZeroSpend) {
+      const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()
+      q = q.gte("last_purchase", oneYearAgo)
+    }
     if (search) {
       // OR across text columns
       q = q.or(

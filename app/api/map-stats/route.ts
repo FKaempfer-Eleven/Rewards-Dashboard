@@ -1,20 +1,26 @@
 // Aggregated map statistics — state counts, distributor counts, totals.
 // Uses a single GROUP BY query instead of loading all 15k rows into memory.
 
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 
 export const maxDuration = 30
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const { supabase } = await import("@/lib/supabase-client")
+  const excludeZeroSpend = req.nextUrl.searchParams.get("excludeZeroSpend") === "true"
 
   try {
-    // One lightweight query: state + distributor_code + aggregates.
-    // Returns ≤ ~450 rows (50 states × 9 distributors) instead of 15k.
-    const { data, error } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q: any = supabase
       .from("salon_cache")
       .select("state, distributor_code, lifetime_sales")
 
+    if (excludeZeroSpend) {
+      const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()
+      q = q.gte("last_purchase", oneYearAgo)
+    }
+
+    const { data, error } = await q
     if (error) throw new Error(error.message)
 
     const stateMap: Record<string, { count: number; sales: number }> = {}

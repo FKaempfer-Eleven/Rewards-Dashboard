@@ -57,6 +57,7 @@ export function SalonExplorerView({
   const [minSpend, setMinSpend] = useState(0)
   const [activeOnly, setActiveOnly] = useState(false)
   const [noEmailOnly, setNoEmailOnly] = useState(false)
+  const [excludeZeroSpend, setExcludeZeroSpend] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>("sales")
   const [sortDir, setSortDir] = useState<-1 | 1>(-1)
   const [page, setPage] = useState(0)
@@ -74,9 +75,10 @@ export function SalonExplorerView({
     if (minSpend > 0) p.set("minSpend", String(minSpend))
     if (activeOnly) p.set("activeOnly", "true")
     if (noEmailOnly) p.set("noEmailOnly", "true")
+    if (excludeZeroSpend) p.set("excludeZeroSpend", "true")
     if (search.trim()) p.set("search", search.trim())
     return p.toString()
-  }, [page, sortKey, sortDir, distFilter, stateFilter, minSpend, activeOnly, noEmailOnly, search])
+  }, [page, sortKey, sortDir, distFilter, stateFilter, minSpend, activeOnly, noEmailOnly, excludeZeroSpend, search])
 
   // ── Fetch ───────────────────────────────────────────────────────────────────
   const fetchSalons = useCallback(async (qs: string) => {
@@ -110,6 +112,7 @@ export function SalonExplorerView({
     setMinSpend(0)
     setActiveOnly(false)
     setNoEmailOnly(false)
+    setExcludeZeroSpend(false)
     onSearchChange("")
     setPage(0)
     if (quickQuery.q === "top") {
@@ -144,6 +147,7 @@ export function SalonExplorerView({
     setMinSpend(0)
     setActiveOnly(false)
     setNoEmailOnly(false)
+    setExcludeZeroSpend(false)
     onSearchChange("")
     setPage(0)
   }
@@ -251,8 +255,8 @@ export function SalonExplorerView({
               </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.4px] text-muted">
+            <div className="flex flex-col gap-2.5">
+              <label className="block text-[11px] font-semibold uppercase tracking-[0.4px] text-muted">
                 Activity
               </label>
               <button
@@ -260,7 +264,7 @@ export function SalonExplorerView({
                 className="flex items-center gap-2.5 text-[13px] font-medium text-ink2"
               >
                 <span
-                  className={`relative h-5 w-9 rounded-full transition-colors ${
+                  className={`relative h-5 w-9 flex-none rounded-full transition-colors ${
                     activeOnly ? "bg-gen" : "bg-line"
                   }`}
                 >
@@ -271,6 +275,23 @@ export function SalonExplorerView({
                   />
                 </span>
                 Active members only
+              </button>
+              <button
+                onClick={() => { setExcludeZeroSpend((v) => !v); setPage(0) }}
+                className="flex items-center gap-2.5 text-[13px] font-medium text-ink2"
+              >
+                <span
+                  className={`relative h-5 w-9 flex-none rounded-full transition-colors ${
+                    excludeZeroSpend ? "bg-coral" : "bg-line"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-all ${
+                      excludeZeroSpend ? "left-[18px]" : "left-0.5"
+                    }`}
+                  />
+                </span>
+                Exclude $0 in last 12 months
               </button>
             </div>
 

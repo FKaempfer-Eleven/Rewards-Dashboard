@@ -69,14 +69,16 @@ export function SalonMapView() {
   const [mapStats, setMapStats] = useState<MapStats | null>(null)
   const [activeSalons, setActiveSalons] = useState<MapSalon[]>([])
   const [loadingDrill, setLoadingDrill] = useState(false)
+  const [excludeZeroSpend, setExcludeZeroSpend] = useState(false)
 
-  // Fetch overview stats on mount
+  // Fetch overview stats (refetch when excludeZeroSpend changes)
   useEffect(() => {
-    fetch("/api/map-stats")
+    const qs = excludeZeroSpend ? "?excludeZeroSpend=true" : ""
+    fetch(`/api/map-stats${qs}`)
       .then((r) => r.json())
       .then(setMapStats)
       .catch(console.error)
-  }, [])
+  }, [excludeZeroSpend])
 
   // Counts by STATES array position
   const stateCountArr = useMemo(
@@ -91,18 +93,20 @@ export function SalonMapView() {
     [mapStats]
   )
 
-  // Fetch salons when drilling into a state
+  // Fetch salons when drilling into a state (or when excludeZeroSpend changes)
   useEffect(() => {
     if (activeState === null) { setActiveSalons([]); return }
     const abbr = STATES[activeState]?.abbr
     if (!abbr) return
     setLoadingDrill(true)
-    fetch(`/api/map-salons?state=${abbr}`)
+    const qs = new URLSearchParams({ state: abbr })
+    if (excludeZeroSpend) qs.set("excludeZeroSpend", "true")
+    fetch(`/api/map-salons?${qs}`)
       .then((r) => r.json())
       .then((d) => setActiveSalons(d.salons ?? []))
       .catch(console.error)
       .finally(() => setLoadingDrill(false))
-  }, [activeState])
+  }, [activeState, excludeZeroSpend])
 
   function enterState(si: number) {
     const st = STATES[si]
@@ -361,6 +365,26 @@ export function SalonMapView() {
           </Panel>
 
           <Panel>
+            <PanelHeader title="Filters" />
+            <div className="border-b border-line2 px-4 py-3">
+              <button
+                onClick={() => setExcludeZeroSpend((v) => !v)}
+                className="flex w-full items-center gap-2.5 text-[12.5px] font-medium text-ink2"
+              >
+                <span
+                  className={`relative h-5 w-9 flex-none rounded-full transition-colors ${
+                    excludeZeroSpend ? "bg-coral" : "bg-line"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition-all ${
+                      excludeZeroSpend ? "left-[18px]" : "left-0.5"
+                    }`}
+                  />
+                </span>
+                Exclude $0 in last 12 months
+              </button>
+            </div>
             <PanelHeader title="Distributors" hint="toggle" />
             <div className="flex flex-col gap-0.5 p-3">
               {DISTRIBUTORS.map((d, i) => {
