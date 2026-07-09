@@ -17,6 +17,7 @@ type SortKey = "sales" | "avgMonthly" | "points" | "lastPurchase" | "name"
 const COLS: { label: string; sortKey?: SortKey; right?: boolean }[] = [
   { label: "Salon" },
   { label: "Location" },
+  { label: "Zip" },
   { label: "Distributor" },
   { label: "Lifetime spend", sortKey: "sales", right: true },
   { label: "Avg / mo", sortKey: "avgMonthly", right: true },
@@ -409,6 +410,9 @@ export function SalonExplorerView({
                       </td>
                       <td className="px-4 py-2.5 text-muted">
                         {s.city && s.state ? `${s.city}, ${s.state}` : s.city || s.state || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 tabular-nums text-muted">
+                        {s.zip || "—"}
                       </td>
                       <td className="px-4 py-2.5">
                         {dist ? (

@@ -3,6 +3,7 @@
 // each request hits the DB with a predicate instead of loading 15k rows.
 
 import { NextRequest, NextResponse } from "next/server"
+import { fetchAllRows } from "@/lib/paginate"
 
 export const maxDuration = 60
 
@@ -62,17 +63,21 @@ export async function GET(req: NextRequest) {
 
   try {
     // ── 1. Aggregates over the full filtered set (lightweight columns only) ──
-    const aggQ = applyFilters(
-      supabase
-        .from("salon_cache")
-        .select("lifetime_sales, avg_monthly_sales, is_active", { count: "exact" })
+    // Page through every matching row — Supabase caps each response at 1000
+    // rows, so summing a single .select() would undercount the totals.
+    const aggRows = await fetchAllRows<{
+      lifetime_sales: number | null
+      avg_monthly_sales: number | null
+      is_active: boolean | null
+    }>((from, to) =>
+      applyFilters(
+        supabase.from("salon_cache").select("lifetime_sales, avg_monthly_sales, is_active")
+      ).range(from, to)
     )
-    const { data: aggRows, count: total, error: aggErr } = await aggQ
-    if (aggErr) throw new Error(aggErr.message)
 
-    const n = total ?? 0
+    const n = aggRows.length
     let totalSales = 0, totalAvgMonthly = 0, activeCount = 0
-    for (const r of aggRows ?? []) {
+    for (const r of aggRows) {
       totalSales       += Number(r.lifetime_sales ?? 0)
       totalAvgMonthly  += Number(r.avg_monthly_sales ?? 0)
       if (r.is_active) activeCount++
@@ -96,7 +101,8 @@ export async function GET(req: NextRequest) {
     if (dataErr) throw new Error(dataErr.message)
 
     // Map DB rows to the LiveSalon shape the frontend expects
-    const salons = (rows ?? []).map((row) => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const salons = (rows ?? []).map((row: Record<string, any>) => ({
       id:                     row.id,
       rawName:                row.raw_name ?? "",
       salonName:              row.salon_name ?? "",

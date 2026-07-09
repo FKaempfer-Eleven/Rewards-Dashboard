@@ -2,6 +2,7 @@
 // Returns lightweight records (no monthly history); caller computes pin coords.
 
 import { NextRequest, NextResponse } from "next/server"
+import { fetchAllRows } from "@/lib/paginate"
 
 export const maxDuration = 60
 
@@ -13,26 +14,27 @@ export async function GET(req: NextRequest) {
   const { supabase } = await import("@/lib/supabase-client")
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q: any = supabase
-      .from("salon_cache")
-      .select("id, salon_name, city, state, distributor_code, distributor_idx, lifetime_sales, is_active")
+    const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()
 
-    if (state) q = q.eq("state", state)
+    // Page through all matching rows — large states (CA, TX, FL) exceed the
+    // 1000-row response cap, so a single query would drop most of their pins.
+    const data = await fetchAllRows<Record<string, unknown>>((from, to) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = supabase
+        .from("salon_cache")
+        .select("id, salon_name, city, state, zip, acct_number, distributor_code, distributor_idx, lifetime_sales, is_active")
+      if (state) q = q.eq("state", state)
+      if (excludeZeroSpend) q = q.gte("last_purchase", oneYearAgo)
+      return q.range(from, to)
+    })
 
-    if (excludeZeroSpend) {
-      const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()
-      q = q.gte("last_purchase", oneYearAgo)
-    }
-
-    const { data, error } = await q
-    if (error) throw new Error(error.message)
-
-    const salons = (data ?? []).map((s: Record<string, unknown>) => ({
+    const salons = data.map((s: Record<string, unknown>) => ({
       id: s.id,
       salonName: s.salon_name,
       city: s.city,
       state: s.state,
+      zip: s.zip ?? null,
+      acctnumber: s.acct_number ?? null,
       distributorCode: s.distributor_code,
       distributorIdx: Number(s.distributor_idx ?? -1),
       lifetimeSales: Number(s.lifetime_sales ?? 0),

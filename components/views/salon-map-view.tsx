@@ -8,7 +8,7 @@ import {
   Marker,
   ZoomableGroup,
 } from "react-simple-maps"
-import { Minus, Plus, RotateCcw, ChevronLeft } from "lucide-react"
+import { Minus, Plus, RotateCcw, ChevronLeft, X } from "lucide-react"
 
 import { Panel, PanelHeader, PageHeader } from "@/components/panel"
 import { US_TOPO, CANADA_TOPO } from "@/lib/geo"
@@ -28,6 +28,8 @@ type MapSalon = {
   salonName: string
   city: string | null
   state: string | null
+  zip: string | null
+  acctnumber: string | null
   distributorCode: string | null
   distributorIdx: number
   lifetimeSales: number
@@ -64,6 +66,7 @@ export function SalonMapView() {
   const [activeState, setActiveState] = useState<number | null>(null) // STATES index
   const [distToggle, setDistToggle] = useState<Set<number>>(new Set())
   const [tip, setTip] = useState<{ x: number; y: number; html: string } | null>(null)
+  const [selected, setSelected] = useState<MapSalon | null>(null) // salon clicked on the map
 
   // Real data
   const [mapStats, setMapStats] = useState<MapStats | null>(null)
@@ -111,12 +114,14 @@ export function SalonMapView() {
   function enterState(si: number) {
     const st = STATES[si]
     setActiveState(si)
+    setSelected(null)
     setCenter([st.lon, st.lat])
     setZoom(st.abbr === "CA" || st.abbr === "TX" ? 4 : 6)
   }
 
   function exitState() {
     setActiveState(null)
+    setSelected(null)
     setCenter(DEFAULT_CENTER)
     setZoom(DEFAULT_ZOOM)
   }
@@ -320,28 +325,33 @@ export function SalonMapView() {
                   })}
 
                 {/* Pins — state drill-down */}
-                {pins.map((s, i) => (
-                  <Marker
-                    key={i}
-                    coordinates={s.coords}
-                    onMouseEnter={() =>
-                      setTip({
-                        x: 0,
-                        y: 0,
-                        html: `<b>${s.salonName}${s.city ? ` · ${s.city}` : ""}</b><br><span style="color:#a99c90">${DISTRIBUTORS[s.distributorIdx]?.short ?? s.distributorCode ?? "—"} · ${usd(s.lifetimeSales)} lifetime</span>`,
-                      })
-                    }
-                    onMouseLeave={() => setTip(null)}
-                  >
-                    <circle
-                      r={pinR}
-                      fill={DISTRIBUTORS[s.distributorIdx]?.color ?? "#888"}
-                      stroke="#fff"
-                      strokeWidth={0.4}
-                      fillOpacity={0.9}
-                    />
-                  </Marker>
-                ))}
+                {pins.map((s, i) => {
+                  const isSel = selected?.id === s.id
+                  return (
+                    <Marker
+                      key={i}
+                      coordinates={s.coords}
+                      onClick={() => { setSelected(s); setTip(null) }}
+                      onMouseEnter={() =>
+                        setTip({
+                          x: 0,
+                          y: 0,
+                          html: `<b>${s.salonName}${s.city ? ` · ${s.city}` : ""}</b><br><span style="color:#a99c90">${DISTRIBUTORS[s.distributorIdx]?.short ?? s.distributorCode ?? "—"} · ${usd(s.lifetimeSales)} lifetime</span>`,
+                        })
+                      }
+                      onMouseLeave={() => setTip(null)}
+                      style={{ default: { cursor: "pointer" }, hover: { cursor: "pointer" } }}
+                    >
+                      <circle
+                        r={isSel ? pinR * 1.9 : pinR}
+                        fill={DISTRIBUTORS[s.distributorIdx]?.color ?? "#888"}
+                        stroke={isSel ? "#1c1a19" : "#fff"}
+                        strokeWidth={isSel ? 1 : 0.4}
+                        fillOpacity={0.9}
+                      />
+                    </Marker>
+                  )
+                })}
               </ZoomableGroup>
             </ComposableMap>
           </div>
@@ -414,7 +424,87 @@ export function SalonMapView() {
           </Panel>
         </div>
       </div>
+
+      {/* Selected-salon detail — appears below the map when a pin is clicked */}
+      {selected && (
+        <SelectedSalonCard salon={selected} onClose={() => setSelected(null)} />
+      )}
     </section>
+  )
+}
+
+function SelectedSalonCard({
+  salon,
+  onClose,
+}: {
+  salon: MapSalon
+  onClose: () => void
+}) {
+  const dist = salon.distributorIdx >= 0 ? DISTRIBUTORS[salon.distributorIdx] : null
+  const location =
+    salon.city && salon.state ? `${salon.city}, ${salon.state}` : salon.city || salon.state || "—"
+
+  return (
+    <div className="mt-5 rounded-[14px] border border-line bg-card shadow-[var(--shadow)]">
+      <div className="flex items-start justify-between border-b border-line2 px-5 py-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[11px] text-faint">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-medium ${
+                salon.isActive ? "bg-gen-soft text-[#1f7256]" : "bg-miss-soft text-muted"
+              }`}
+            >
+              <i
+                className="size-1.5 rounded-full"
+                style={{ background: salon.isActive ? "#2F9E78" : "#C8BBAE" }}
+              />
+              {salon.isActive ? "Active" : "Dormant"}
+            </span>
+            <span>{salon.acctnumber ?? "—"}</span>
+          </div>
+          <h3 className="mt-1.5 font-display text-[18px] font-semibold tracking-[0.2px] text-ink">
+            {salon.salonName}
+          </h3>
+        </div>
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="flex size-8 flex-none items-center justify-center rounded-full border border-line text-faint transition-colors hover:border-coral hover:text-coral"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-6 gap-y-4 px-5 py-4 sm:grid-cols-4">
+        <DetailItem label="Location" value={location} />
+        <DetailItem label="Zip Code" value={salon.zip || "—"} />
+        <DetailItem
+          label="Distributor"
+          value={
+            dist ? (
+              <span className="inline-flex items-center gap-1.5">
+                <i className="size-2 rounded-full" style={{ background: dist.color }} />
+                {dist.short}
+              </span>
+            ) : (
+              "—"
+            )
+          }
+        />
+        <DetailItem label="Lifetime spend" value={usd(salon.lifetimeSales)} />
+      </div>
+    </div>
+  )
+}
+
+function DetailItem({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.4px] text-muted">
+        {label}
+      </div>
+      <div className="text-[13.5px] font-medium text-ink">{value}</div>
+    </div>
   )
 }
 
