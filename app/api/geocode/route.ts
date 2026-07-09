@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
   // Sub-batch size sent to Census per round; the route drains several rounds
   // per invocation until a time budget is hit, committing after each round.
   const chunk = Math.min(2000, Math.max(1, Number(req.nextUrl.searchParams.get("limit") ?? 500)))
-  const budgetMs = 50_000
+  const budgetMs = Math.min(50_000, Math.max(5_000, Number(req.nextUrl.searchParams.get("budgetMs") ?? 22_000)))
   const start = Date.now()
 
   const isCanada = (c: string | null) => (c ?? "").trim().toUpperCase().startsWith("CA")
