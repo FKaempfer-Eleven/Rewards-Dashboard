@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ComposableMap,
   Geographies,
@@ -67,6 +67,16 @@ export function SalonMapView() {
   const [distToggle, setDistToggle] = useState<Set<number>>(new Set())
   const [tip, setTip] = useState<{ x: number; y: number; html: string } | null>(null)
   const [selected, setSelected] = useState<MapSalon | null>(null) // salon clicked on the map
+  const detailRef = useRef<HTMLDivElement>(null)
+
+  // Scroll the detail card into view when a salon pin is clicked
+  useEffect(() => {
+    if (selected) {
+      requestAnimationFrame(() =>
+        detailRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
+      )
+    }
+  }, [selected])
 
   // Real data
   const [mapStats, setMapStats] = useState<MapStats | null>(null)
@@ -426,9 +436,11 @@ export function SalonMapView() {
       </div>
 
       {/* Selected-salon detail — appears below the map when a pin is clicked */}
-      {selected && (
-        <SelectedSalonCard salon={selected} onClose={() => setSelected(null)} />
-      )}
+      <div ref={detailRef}>
+        {selected && (
+          <SelectedSalonCard salon={selected} onClose={() => setSelected(null)} />
+        )}
+      </div>
     </section>
   )
 }
