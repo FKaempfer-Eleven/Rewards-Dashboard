@@ -168,6 +168,8 @@ export function SalonMapView() {
       />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_320px]">
+        {/* Left column — map + selected-salon detail directly beneath it */}
+        <div className="flex min-w-0 flex-col gap-5">
         {/* Map card */}
         <div className="relative h-[560px] overflow-hidden rounded-[14px] border border-line bg-paper2 shadow-[var(--shadow)]">
           {activeState !== null && (
@@ -367,6 +369,14 @@ export function SalonMapView() {
           </div>
         </div>
 
+        {/* Selected-salon detail — directly below the map in the left column */}
+        <div ref={detailRef}>
+          {selected && (
+            <SelectedSalonCard salon={selected} onClose={() => setSelected(null)} />
+          )}
+        </div>
+        </div>
+
         {/* Side panel */}
         <div className="flex flex-col gap-4">
           <Panel>
@@ -435,12 +445,6 @@ export function SalonMapView() {
         </div>
       </div>
 
-      {/* Selected-salon detail — appears below the map when a pin is clicked */}
-      <div ref={detailRef}>
-        {selected && (
-          <SelectedSalonCard salon={selected} onClose={() => setSelected(null)} />
-        )}
-      </div>
     </section>
   )
 }
@@ -457,7 +461,7 @@ function SelectedSalonCard({
     salon.city && salon.state ? `${salon.city}, ${salon.state}` : salon.city || salon.state || "—"
 
   return (
-    <div className="mt-5 rounded-[14px] border border-line bg-card shadow-[var(--shadow)]">
+    <div className="rounded-[14px] border border-line bg-card shadow-[var(--shadow)]">
       <div className="flex items-start justify-between border-b border-line2 px-5 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[11px] text-faint">
