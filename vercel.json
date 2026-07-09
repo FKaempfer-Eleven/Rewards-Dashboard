@@ -4,6 +4,10 @@
     {
       "path": "/api/sync",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/geocode?limit=1000&budgetMs=50000",
+      "schedule": "30 6 * * *"
     }
   ]
 }

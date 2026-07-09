@@ -80,6 +80,7 @@ export async function GET(req: NextRequest) {
     let matched = 0
     let canadaSkipped = 0
     let rounds = 0
+    let censusError: string | null = null
 
     while (Date.now() - start < budgetMs) {
       const { data, error } = await supabase
@@ -121,9 +122,21 @@ export async function GET(req: NextRequest) {
         form.append("benchmark", "Public_AR_Current")
         form.append("addressFile", new Blob([csv], { type: "text/csv" }), "addresses.csv")
 
-        const res = await fetch(CENSUS_URL, { method: "POST", body: form })
-        if (!res.ok) throw new Error(`Census returned ${res.status}: ${await res.text()}`)
-        const text = await res.text()
+        // Fail fast if Census is slow / rate-limiting, so the function never
+        // hangs to the platform timeout. On error, stop and keep prior commits.
+        let text: string
+        try {
+          const res = await fetch(CENSUS_URL, {
+            method: "POST",
+            body: form,
+            signal: AbortSignal.timeout(15_000),
+          })
+          if (!res.ok) throw new Error(`Census returned ${res.status}`)
+          text = await res.text()
+        } catch (e) {
+          censusError = String(e)
+          break
+        }
 
         // Columns: id, input, matchIndicator, matchType, matchedAddress, "lon,lat", tigerlineId, side
         for (const line of text.split("\n")) {
@@ -174,6 +187,7 @@ export async function GET(req: NextRequest) {
       matched,
       canadaSkipped,
       remaining: remaining ?? 0,
+      censusError,
       ms: Date.now() - start,
     })
   } catch (err) {
