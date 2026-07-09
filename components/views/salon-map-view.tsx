@@ -1,18 +1,10 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import {
-  ComposableMap,
-  Geographies,
-  Geography,
-  Marker,
-  ZoomableGroup,
-} from "react-simple-maps"
-import { Minus, Plus, RotateCcw, ChevronLeft, X } from "lucide-react"
+import { X, Loader2 } from "lucide-react"
 
 import { Panel, PanelHeader, PageHeader } from "@/components/panel"
-import { US_TOPO, CANADA_TOPO } from "@/lib/geo"
-import { DISTRIBUTORS, STATES, fmt, usd, usdC } from "@/lib/data"
+import { DISTRIBUTORS, fmt, usd, usdC } from "@/lib/data"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,53 +15,171 @@ type MapStats = {
   distributors: Record<string, number>
 }
 
-type MapSalon = {
+// Compact point shape returned by /api/map-points
+type MapPoint = {
   id: string
-  salonName: string
-  city: string | null
-  state: string | null
-  zip: string | null
-  acctnumber: string | null
-  distributorCode: string | null
-  distributorIdx: number
-  lifetimeSales: number
-  isActive: boolean
+  n: string // salon name
+  c: string | null // city
+  st: string | null // state
+  z: string | null // zip
+  a: string | null // acct number
+  d: number // distributor idx
+  dc: string | null // distributor code
+  v: number // lifetime sales
+  act: boolean // is active
+  lat: number
+  lng: number
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Leaflet CDN loader (avoids bundling / SSR issues) ───────────────────────────
 
-/** Deterministic jitter from GUID: same salon always at same position.
- *  spread is the STATE_GEO spread value — larger provinces/states get wider scatter. */
-function jitteredCoords(id: string, lat: number, lon: number, spread: number): [number, number] {
-  let h = 0
-  for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0
-  const jLat = ((h & 0xff) / 255 - 0.5) * spread * 1.2        // e.g. ±1.44° for CT, ±3.6° for BC
-  const jLon = (((h >> 8) & 0xff) / 255 - 0.5) * spread * 1.8 // wider E-W than N-S
-  return [lon + jLon, lat + jLat]
+/* eslint-disable @typescript-eslint/no-explicit-any */
+let leafletPromise: Promise<any> | null = null
+
+function loadLeaflet(): Promise<any> {
+  if (typeof window === "undefined") return Promise.resolve(null)
+  const w = window as any
+  if (w.L && w.L.markerClusterGroup) return Promise.resolve(w.L)
+  if (leafletPromise) return leafletPromise
+
+  const addCss = (href: string) => {
+    if (!document.querySelector(`link[data-lf="${href}"]`)) {
+      const l = document.createElement("link")
+      l.rel = "stylesheet"
+      l.href = href
+      l.setAttribute("data-lf", href)
+      document.head.appendChild(l)
+    }
+  }
+  const addScript = (src: string) =>
+    new Promise<void>((res, rej) => {
+      const existing = document.querySelector(`script[data-lf="${src}"]`) as any
+      if (existing) {
+        if (existing._loaded) res()
+        else existing.addEventListener("load", () => res())
+        return
+      }
+      const s = document.createElement("script") as any
+      s.src = src
+      s.async = true
+      s.setAttribute("data-lf", src)
+      s.addEventListener("load", () => { s._loaded = true; res() })
+      s.addEventListener("error", () => rej(new Error("Failed to load " + src)))
+      document.head.appendChild(s)
+    })
+
+  addCss("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css")
+  addCss("https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css")
+  addCss("https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.min.css")
+
+  leafletPromise = addScript("https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js")
+    .then(() => addScript("https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"))
+    .then(() => (window as any).L)
+  return leafletPromise
 }
 
-const DEFAULT_CENTER: [number, number] = [-96, 47]
-const DEFAULT_ZOOM = 1
-
-function colorScale(c: number, max: number) {
-  const t = Math.min(1, c / max)
-  const a = [251, 228, 218]
-  const b = [200, 72, 59]
-  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * t)},${Math.round(a[1] + (b[1] - a[1]) * t)},${Math.round(a[2] + (b[2] - a[2]) * t)})`
+function escapeHtml(s: string): string {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string)
+  )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Main component ──────────────────────────────────────────────────────────────
 
 export function SalonMapView() {
-  const [center, setCenter] = useState<[number, number]>(DEFAULT_CENTER)
-  const [zoom, setZoom] = useState(DEFAULT_ZOOM)
-  const [activeState, setActiveState] = useState<number | null>(null) // STATES index
-  const [distToggle, setDistToggle] = useState<Set<number>>(new Set())
-  const [tip, setTip] = useState<{ x: number; y: number; html: string } | null>(null)
-  const [selected, setSelected] = useState<MapSalon | null>(null) // salon clicked on the map
+  const mapEl = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<any>(null)
+  const clusterRef = useRef<any>(null)
+  const LRef = useRef<any>(null)
   const detailRef = useRef<HTMLDivElement>(null)
 
-  // Scroll the detail card into view when a salon pin is clicked
+  const [leafletReady, setLeafletReady] = useState(false)
+  const [points, setPoints] = useState<MapPoint[]>([])
+  const [mapStats, setMapStats] = useState<MapStats | null>(null)
+  const [loadingPoints, setLoadingPoints] = useState(true)
+  const [distToggle, setDistToggle] = useState<Set<number>>(new Set())
+  const [excludeZeroSpend, setExcludeZeroSpend] = useState(false)
+  const [selected, setSelected] = useState<MapPoint | null>(null)
+
+  // Overview stats
+  useEffect(() => {
+    const qs = excludeZeroSpend ? "?excludeZeroSpend=true" : ""
+    fetch(`/api/map-stats${qs}`).then((r) => r.json()).then(setMapStats).catch(console.error)
+  }, [excludeZeroSpend])
+
+  // Geocoded points
+  useEffect(() => {
+    setLoadingPoints(true)
+    const qs = excludeZeroSpend ? "?excludeZeroSpend=true" : ""
+    fetch(`/api/map-points${qs}`)
+      .then((r) => r.json())
+      .then((d) => setPoints(d.points ?? []))
+      .catch(console.error)
+      .finally(() => setLoadingPoints(false))
+  }, [excludeZeroSpend])
+
+  // Initialize Leaflet once
+  useEffect(() => {
+    let cancelled = false
+    loadLeaflet()
+      .then((L) => {
+        if (cancelled || !L || !mapEl.current || mapRef.current) return
+        LRef.current = L
+        const map = L.map(mapEl.current, {
+          center: [44, -96],
+          zoom: 4,
+          scrollWheelZoom: true,
+          worldCopyJump: true,
+        })
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: "&copy; OpenStreetMap contributors",
+        }).addTo(map)
+        mapRef.current = map
+        setTimeout(() => map.invalidateSize(), 200)
+        setLeafletReady(true)
+      })
+      .catch(console.error)
+    return () => { cancelled = true }
+  }, [])
+
+  // (Re)build clustered markers whenever data / filters change
+  useEffect(() => {
+    const L = LRef.current
+    const map = mapRef.current
+    if (!L || !map || !leafletReady) return
+
+    if (clusterRef.current) {
+      map.removeLayer(clusterRef.current)
+      clusterRef.current = null
+    }
+
+    const list = distToggle.size > 0 ? points.filter((p) => distToggle.has(p.d)) : points
+    const cluster = L.markerClusterGroup({ chunkedLoading: true, maxClusterRadius: 50 })
+
+    for (const p of list) {
+      const color = DISTRIBUTORS[p.d]?.color ?? "#888"
+      const marker = L.circleMarker([p.lat, p.lng], {
+        radius: 6,
+        color: "#ffffff",
+        weight: 1,
+        fillColor: color,
+        fillOpacity: 0.9,
+      })
+      const short = DISTRIBUTORS[p.d]?.short ?? p.dc ?? "—"
+      marker.bindTooltip(
+        `<b>${escapeHtml(p.n)}</b><br>${escapeHtml(short)} · ${usd(p.v)}`,
+        { direction: "top", offset: [0, -4] }
+      )
+      marker.on("click", () => setSelected(p))
+      cluster.addLayer(marker)
+    }
+
+    map.addLayer(cluster)
+    clusterRef.current = cluster
+  }, [points, distToggle, leafletReady])
+
+  // Scroll the detail card into view when a salon is clicked
   useEffect(() => {
     if (selected) {
       requestAnimationFrame(() =>
@@ -78,319 +188,82 @@ export function SalonMapView() {
     }
   }, [selected])
 
-  // Real data
-  const [mapStats, setMapStats] = useState<MapStats | null>(null)
-  const [activeSalons, setActiveSalons] = useState<MapSalon[]>([])
-  const [loadingDrill, setLoadingDrill] = useState(false)
-  const [excludeZeroSpend, setExcludeZeroSpend] = useState(false)
-
-  // Fetch overview stats (refetch when excludeZeroSpend changes)
-  useEffect(() => {
-    const qs = excludeZeroSpend ? "?excludeZeroSpend=true" : ""
-    fetch(`/api/map-stats${qs}`)
-      .then((r) => r.json())
-      .then(setMapStats)
-      .catch(console.error)
-  }, [excludeZeroSpend])
-
-  // Counts by STATES array position
-  const stateCountArr = useMemo(
-    () => STATES.map((s) => mapStats?.states[s.abbr]?.count ?? 0),
-    [mapStats]
-  )
-  const maxCount = useMemo(() => Math.max(...stateCountArr, 1), [stateCountArr])
-
-  // Distributor counts from real data
   const distCountArr = useMemo(
     () => DISTRIBUTORS.map((d) => mapStats?.distributors[d.code] ?? 0),
     [mapStats]
   )
-
-  // Fetch salons when drilling into a state (or when excludeZeroSpend changes)
-  useEffect(() => {
-    if (activeState === null) { setActiveSalons([]); return }
-    const abbr = STATES[activeState]?.abbr
-    if (!abbr) return
-    setLoadingDrill(true)
-    const qs = new URLSearchParams({ state: abbr })
-    if (excludeZeroSpend) qs.set("excludeZeroSpend", "true")
-    fetch(`/api/map-salons?${qs}`)
-      .then((r) => r.json())
-      .then((d) => setActiveSalons(d.salons ?? []))
-      .catch(console.error)
-      .finally(() => setLoadingDrill(false))
-  }, [activeState, excludeZeroSpend])
-
-  function enterState(si: number) {
-    const st = STATES[si]
-    setActiveState(si)
-    setSelected(null)
-    setCenter([st.lon, st.lat])
-    setZoom(st.abbr === "CA" || st.abbr === "TX" ? 4 : 6)
-  }
-
-  function exitState() {
-    setActiveState(null)
-    setSelected(null)
-    setCenter(DEFAULT_CENTER)
-    setZoom(DEFAULT_ZOOM)
-  }
-
-  function zoomBy(factor: number) {
-    setZoom((z) => Math.max(1, Math.min(18, z * factor)))
-  }
-
-  // Pins with jittered coordinates
-  const pins = useMemo(() => {
-    if (activeState === null || !STATES[activeState]) return []
-    const { lat, lon, spread } = STATES[activeState]
-    let list = activeSalons
-    if (distToggle.size > 0) list = list.filter((s) => distToggle.has(s.distributorIdx))
-    // Cap at 900 pins for perf
-    if (list.length > 900) {
-      const step = list.length / 900
-      const out: MapSalon[] = []
-      for (let k = 0; k < list.length; k += step) out.push(list[Math.floor(k)])
-      list = out
-    }
-    return list.map((s) => ({ ...s, coords: jitteredCoords(s.id, lat, lon, spread) }))
-  }, [activeState, activeSalons, distToggle])
-
-  const pinR = Math.max(1.2, Math.min(4, 5 / zoom))
-  const bubbleScale = (c: number) => Math.max(7, Math.sqrt(c) * 1.6)
+  const regions = useMemo(
+    () => (mapStats ? Object.values(mapStats.states).filter((s) => s.count > 0).length : 0),
+    [mapStats]
+  )
+  const topStates = useMemo(() => {
+    if (!mapStats) return [] as [string, number][]
+    return Object.entries(mapStats.states)
+      .map(([abbr, s]) => [abbr, s.count] as [string, number])
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+  }, [mapStats])
 
   return (
     <section>
       <PageHeader
         eyebrow="Geographic distribution"
         title="Salon Map"
-        description="Bubbles show salon counts by state and province across the U.S. and Canada. Click one to drop into individual salon pins — use + / − to zoom further."
+        description="Every salon plotted at its real geocoded address on an OpenStreetMap base. Zoom in to see streets and individual locations; nearby salons group into clusters — click a cluster to expand, or a pin to see its details below."
       />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_320px]">
         {/* Left column — map + selected-salon detail directly beneath it */}
         <div className="flex min-w-0 flex-col gap-5">
-        {/* Map card */}
-        <div className="relative h-[560px] overflow-hidden rounded-[14px] border border-line bg-paper2 shadow-[var(--shadow)]">
-          {activeState !== null && (
-            <button
-              onClick={exitState}
-              className="absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-medium text-ink shadow-[var(--shadow)] transition-colors hover:bg-paper2"
-            >
-              <ChevronLeft className="size-4" />
-              Back to map
-            </button>
-          )}
-          <div className="absolute right-3 top-3 z-20 flex flex-col gap-1.5">
-            <MapBtn onClick={() => zoomBy(1.5)} label="Zoom in">
-              <Plus className="size-4" />
-            </MapBtn>
-            <MapBtn onClick={() => zoomBy(0.66)} label="Zoom out">
-              <Minus className="size-4" />
-            </MapBtn>
-            <MapBtn onClick={exitState} label="Reset view">
-              <RotateCcw className="size-3.5" />
-            </MapBtn>
+          {/* Map card */}
+          <div className="relative h-[560px] overflow-hidden rounded-[14px] border border-line bg-paper2 shadow-[var(--shadow)]">
+            <div ref={mapEl} className="h-full w-full" style={{ background: "#eef3f6" }} />
+            {(!leafletReady || loadingPoints) && (
+              <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center bg-paper2/60">
+                <span className="flex items-center gap-2 text-[13px] text-muted">
+                  <Loader2 className="size-4 animate-spin" />
+                  {leafletReady ? "Loading salon locations…" : "Loading map…"}
+                </span>
+              </div>
+            )}
+            <div className="pointer-events-none absolute bottom-2 left-2 z-[500] rounded-md bg-white/85 px-2 py-1 text-[11px] text-muted shadow">
+              {fmt(points.length)} salons plotted
+            </div>
           </div>
 
-          {tip && (
-            <div
-              className="pointer-events-none absolute z-30 max-w-[200px] rounded-lg bg-ink px-3 py-2 text-[12px] leading-snug text-[#ede6df] shadow-[var(--shadow-lg)]"
-              style={{ left: tip.x + 14, top: tip.y + 14 }}
-              dangerouslySetInnerHTML={{ __html: tip.html }}
-            />
-          )}
-
-          <div
-            className="h-full w-full"
-            onMouseLeave={() => setTip(null)}
-            onMouseMove={(e) => {
-              if (!tip) return
-              const rect = e.currentTarget.getBoundingClientRect()
-              setTip((t) => (t ? { ...t, x: e.clientX - rect.left, y: e.clientY - rect.top } : t))
-            }}
-          >
-            <ComposableMap
-              projection="geoAlbers"
-              projectionConfig={{
-                rotate: [96, 0, 0],
-                center: [-0.6, 39],
-                parallels: [29.5, 45.5],
-                scale: 850,
-              }}
-              width={800}
-              height={560}
-              style={{ width: "100%", height: "100%" }}
-            >
-              <ZoomableGroup
-                center={center}
-                zoom={zoom}
-                minZoom={1}
-                maxZoom={18}
-                onMoveEnd={({ coordinates, zoom: z }) => {
-                  setCenter(coordinates as [number, number])
-                  setZoom(z)
-                }}
-              >
-                {/* Canada backdrop */}
-                <Geographies geography={CANADA_TOPO}>
-                  {({ geographies }) =>
-                    geographies
-                      .filter((g) => g.properties.name === "Canada")
-                      .map((geo) => (
-                        <Geography
-                          key={geo.rsmKey}
-                          geography={geo}
-                          style={{
-                            default: { fill: "#efe6dc", stroke: "#e0d3c5", strokeWidth: 0.4, outline: "none" },
-                            hover: { fill: "#efe6dc", outline: "none" },
-                            pressed: { fill: "#efe6dc", outline: "none" },
-                          }}
-                        />
-                      ))
-                  }
-                </Geographies>
-
-                {/* US states */}
-                <Geographies geography={US_TOPO}>
-                  {({ geographies }) =>
-                    geographies.map((geo) => {
-                      const si = STATES.findIndex((s) => s.name === geo.properties.name)
-                      const count = si >= 0 ? stateCountArr[si] : 0
-                      const dim = activeState !== null && si !== activeState
-                      const sel = activeState !== null && si === activeState
-                      return (
-                        <Geography
-                          key={geo.rsmKey}
-                          geography={geo}
-                          onClick={() => si >= 0 && enterState(si)}
-                          onMouseEnter={() =>
-                            si >= 0 &&
-                            setTip({
-                              x: 0,
-                              y: 0,
-                              html: `<b>${STATES[si].name}</b><br><span style="color:#a99c90">${fmt(count)} salons · click to zoom</span>`,
-                            })
-                          }
-                          style={{
-                            default: {
-                              fill: si >= 0 ? colorScale(count, maxCount) : "#efe6dc",
-                              stroke: "#ffffff",
-                              strokeWidth: 0.5,
-                              outline: "none",
-                              opacity: dim ? 0.35 : 1,
-                              cursor: si >= 0 ? "pointer" : "default",
-                              transition: "opacity .3s",
-                            },
-                            hover: {
-                              fill: si >= 0 ? "#e8654f" : "#efe6dc",
-                              stroke: "#ffffff",
-                              strokeWidth: sel ? 1 : 0.5,
-                              outline: "none",
-                              opacity: dim ? 0.35 : 1,
-                              cursor: si >= 0 ? "pointer" : "default",
-                            },
-                            pressed: { fill: "#c9483b", outline: "none" },
-                          }}
-                        />
-                      )
-                    })
-                  }
-                </Geographies>
-
-                {/* Bubbles — overview mode */}
-                {activeState === null &&
-                  STATES.map((s, si) => {
-                    const c = stateCountArr[si]
-                    if (!c) return null
-                    const r = bubbleScale(c) / zoom
-                    return (
-                      <Marker
-                        key={s.abbr}
-                        coordinates={[s.lon, s.lat]}
-                        onClick={() => enterState(si)}
-                        onMouseEnter={() =>
-                          setTip({
-                            x: 0,
-                            y: 0,
-                            html: `<b>${s.name}</b><br><span style="color:#a99c90">${fmt(c)} salons</span>`,
-                          })
-                        }
-                        onMouseLeave={() => setTip(null)}
-                        style={{ default: { cursor: "pointer" }, hover: { cursor: "pointer" } }}
-                      >
-                        <circle r={r} fill="rgba(28,26,25,0.78)" stroke="#fff" strokeWidth={0.6} />
-                        <text
-                          textAnchor="middle"
-                          y={3 / zoom}
-                          style={{
-                            fontFamily: "var(--font-oswald), sans-serif",
-                            fontSize: `${Math.max(7, 10 / zoom)}px`,
-                            fill: "#fff",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {c}
-                        </text>
-                      </Marker>
-                    )
-                  })}
-
-                {/* Pins — state drill-down */}
-                {pins.map((s, i) => {
-                  const isSel = selected?.id === s.id
-                  return (
-                    <Marker
-                      key={i}
-                      coordinates={s.coords}
-                      onClick={() => { setSelected(s); setTip(null) }}
-                      onMouseEnter={() =>
-                        setTip({
-                          x: 0,
-                          y: 0,
-                          html: `<b>${s.salonName}${s.city ? ` · ${s.city}` : ""}</b><br><span style="color:#a99c90">${DISTRIBUTORS[s.distributorIdx]?.short ?? s.distributorCode ?? "—"} · ${usd(s.lifetimeSales)} lifetime</span>`,
-                        })
-                      }
-                      onMouseLeave={() => setTip(null)}
-                      style={{ default: { cursor: "pointer" }, hover: { cursor: "pointer" } }}
-                    >
-                      <circle
-                        r={isSel ? pinR * 1.9 : pinR}
-                        fill={DISTRIBUTORS[s.distributorIdx]?.color ?? "#888"}
-                        stroke={isSel ? "#1c1a19" : "#fff"}
-                        strokeWidth={isSel ? 1 : 0.4}
-                        fillOpacity={0.9}
-                      />
-                    </Marker>
-                  )
-                })}
-              </ZoomableGroup>
-            </ComposableMap>
+          {/* Selected-salon detail */}
+          <div ref={detailRef}>
+            {selected && (
+              <SelectedSalonCard salon={selected} onClose={() => setSelected(null)} />
+            )}
           </div>
-        </div>
-
-        {/* Selected-salon detail — directly below the map in the left column */}
-        <div ref={detailRef}>
-          {selected && (
-            <SelectedSalonCard salon={selected} onClose={() => setSelected(null)} />
-          )}
-        </div>
         </div>
 
         {/* Side panel */}
         <div className="flex flex-col gap-4">
           <Panel>
-            <PanelHeader
-              title={activeState === null ? "North America" : STATES[activeState].name}
-            />
+            <PanelHeader title="North America" />
             <div className="p-5">
-              <SidePanel
-                activeState={activeState}
-                mapStats={mapStats}
-                stateCountArr={stateCountArr}
-                activeSalons={activeSalons}
-                loadingDrill={loadingDrill}
-              />
+              <Stat k="Total salons" v={mapStats ? fmt(mapStats.total) : "—"} />
+              <Stat k="States & provinces" v={String(regions)} />
+              <Stat k="Lifetime sales" v={mapStats ? usdC(mapStats.totalSales) : "—"} />
+              <Stat k="Plotted on map" v={fmt(points.length)} small />
+              <div className="mt-3.5">
+                <div className="mb-1 mt-3.5 text-[10.5px] font-bold uppercase tracking-[1px] text-muted">
+                  Top regions
+                </div>
+                {topStates.map(([abbr, c]) => (
+                  <div key={abbr} className="flex justify-between py-1.5 text-[12.5px] text-ink2">
+                    <span>{abbr}</span>
+                    <span className="tabular-nums text-muted">{fmt(c)}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3.5 border-t border-line2 pt-3.5 text-[12px] leading-relaxed text-faint">
+                Each pin is one salon at its geocoded street address, colored by servicing
+                distributor. Canadian salons are geocoded separately and may appear as they are
+                processed.
+              </p>
             </div>
           </Panel>
 
@@ -444,21 +317,21 @@ export function SalonMapView() {
           </Panel>
         </div>
       </div>
-
     </section>
   )
 }
+
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 function SelectedSalonCard({
   salon,
   onClose,
 }: {
-  salon: MapSalon
+  salon: MapPoint
   onClose: () => void
 }) {
-  const dist = salon.distributorIdx >= 0 ? DISTRIBUTORS[salon.distributorIdx] : null
-  const location =
-    salon.city && salon.state ? `${salon.city}, ${salon.state}` : salon.city || salon.state || "—"
+  const dist = salon.d >= 0 ? DISTRIBUTORS[salon.d] : null
+  const location = salon.c && salon.st ? `${salon.c}, ${salon.st}` : salon.c || salon.st || "—"
 
   return (
     <div className="rounded-[14px] border border-line bg-card shadow-[var(--shadow)]">
@@ -467,19 +340,19 @@ function SelectedSalonCard({
           <div className="flex items-center gap-2 text-[11px] text-faint">
             <span
               className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-medium ${
-                salon.isActive ? "bg-gen-soft text-[#1f7256]" : "bg-miss-soft text-muted"
+                salon.act ? "bg-gen-soft text-[#1f7256]" : "bg-miss-soft text-muted"
               }`}
             >
               <i
                 className="size-1.5 rounded-full"
-                style={{ background: salon.isActive ? "#2F9E78" : "#C8BBAE" }}
+                style={{ background: salon.act ? "#2F9E78" : "#C8BBAE" }}
               />
-              {salon.isActive ? "Active" : "Dormant"}
+              {salon.act ? "Active" : "Dormant"}
             </span>
-            <span>{salon.acctnumber ?? "—"}</span>
+            <span>{salon.a ?? "—"}</span>
           </div>
           <h3 className="mt-1.5 font-display text-[18px] font-semibold tracking-[0.2px] text-ink">
-            {salon.salonName}
+            {salon.n}
           </h3>
         </div>
         <button
@@ -493,7 +366,7 @@ function SelectedSalonCard({
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-4 px-5 py-4 sm:grid-cols-4">
         <DetailItem label="Location" value={location} />
-        <DetailItem label="Zip Code" value={salon.zip || "—"} />
+        <DetailItem label="Zip Code" value={salon.z || "—"} />
         <DetailItem
           label="Distributor"
           value={
@@ -507,7 +380,7 @@ function SelectedSalonCard({
             )
           }
         />
-        <DetailItem label="Lifetime spend" value={usd(salon.lifetimeSales)} />
+        <DetailItem label="Lifetime spend" value={usd(salon.v)} />
       </div>
     </div>
   )
@@ -524,104 +397,6 @@ function DetailItem({ label, value }: { label: string; value: React.ReactNode })
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-function MapBtn({
-  onClick,
-  label,
-  children,
-}: {
-  onClick: () => void
-  label: string
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      aria-label={label}
-      className="grid size-9 place-items-center rounded-full border border-line bg-white text-ink shadow-[var(--shadow)] transition-colors hover:bg-paper2"
-    >
-      {children}
-    </button>
-  )
-}
-
-function SidePanel({
-  activeState,
-  mapStats,
-  stateCountArr,
-  activeSalons,
-  loadingDrill,
-}: {
-  activeState: number | null
-  mapStats: MapStats | null
-  stateCountArr: number[]
-  activeSalons: MapSalon[]
-  loadingDrill: boolean
-}) {
-  if (activeState === null) {
-    // Overview panel
-    const topStates = STATES.map((s, k) => ({ s, c: stateCountArr[k] }))
-      .sort((a, b) => b.c - a.c)
-      .slice(0, 6)
-    const regions = stateCountArr.filter((c) => c > 0).length
-
-    return (
-      <div>
-        <Stat k="Total salons" v={mapStats ? fmt(mapStats.total) : "—"} />
-        <Stat k="States & provinces" v={String(regions)} />
-        <Stat k="Lifetime sales" v={mapStats ? usdC(mapStats.totalSales) : "—"} />
-        <SideList
-          title="Top regions"
-          rows={topStates.filter((t) => t.c > 0).map((t) => [t.s.name, fmt(t.c)])}
-        />
-        <p className="mt-3.5 border-t border-line2 pt-3.5 text-[12px] leading-relaxed text-faint">
-          Tip — click a state to see its salons. Each pin is one salon, colored by its servicing
-          distributor.
-        </p>
-      </div>
-    )
-  }
-
-  // State drill-down panel
-  const abbr = STATES[activeState].abbr
-  const stateStats = mapStats?.states[abbr]
-
-  if (loadingDrill) {
-    return (
-      <div className="py-6 text-center text-[12.5px] text-muted">Loading salons…</div>
-    )
-  }
-
-  // City breakdown
-  const cm: Record<string, number> = {}
-  for (const s of activeSalons) {
-    const cn = s.city ?? "—"
-    cm[cn] = (cm[cn] || 0) + 1
-  }
-  const topCities = Object.entries(cm)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-
-  // Top distributor
-  const dm: Record<number, number> = {}
-  for (const s of activeSalons) dm[s.distributorIdx] = (dm[s.distributorIdx] ?? 0) + 1
-  const topDistIdx = Object.entries(dm).sort((a, b) => b[1] - a[1])[0]?.[0]
-
-  return (
-    <div>
-      <Stat k={`Salons in ${abbr}`} v={fmt(stateStats?.count ?? activeSalons.length)} />
-      <Stat k="Lifetime sales" v={usdC(stateStats?.sales ?? 0)} />
-      <Stat
-        k="Top distributor"
-        v={topDistIdx !== undefined ? (DISTRIBUTORS[Number(topDistIdx)]?.short ?? "—") : "—"}
-        small
-      />
-      <SideList title="Top cities" rows={topCities.map(([c, n]) => [c, fmt(n)])} />
-    </div>
-  )
-}
-
 function Stat({ k, v, small }: { k: string; v: string; small?: boolean }) {
   return (
     <div className="flex items-center justify-between border-b border-line2 py-2.5 last:border-b-0">
@@ -633,22 +408,6 @@ function Stat({ k, v, small }: { k: string; v: string; small?: boolean }) {
       >
         {v}
       </span>
-    </div>
-  )
-}
-
-function SideList({ title, rows }: { title: string; rows: [string, string][] }) {
-  return (
-    <div className="mt-1.5">
-      <div className="mb-1 mt-3.5 text-[10.5px] font-bold uppercase tracking-[1px] text-muted">
-        {title}
-      </div>
-      {rows.map(([a, b]) => (
-        <div key={a} className="flex justify-between py-1.5 text-[12.5px] text-ink2">
-          <span>{a}</span>
-          <span className="tabular-nums text-muted">{b}</span>
-        </div>
-      ))}
     </div>
   )
 }
