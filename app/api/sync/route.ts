@@ -107,6 +107,8 @@ async function upsertSalons(salons: LiveSalon[]) {
     salon_name: s.salonName,
     contact_name: s.contactName,
     email: s.email,
+    street1: s.street1,
+    street2: s.street2,
     city: s.city,
     state: s.state,
     zip: s.zip,

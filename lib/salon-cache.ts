@@ -32,6 +32,8 @@ export function mapSupabaseRow(row: Record<string, unknown>): LiveSalon {
     salonName: (row.salon_name as string) ?? "",
     contactName: (row.contact_name as string) ?? "",
     email: (row.email as string | null) ?? null,
+    street1: (row.street1 as string | null) ?? null,
+    street2: (row.street2 as string | null) ?? null,
     city: (row.city as string | null) ?? null,
     state: (row.state as string | null) ?? null,
     zip: (row.zip as string | null) ?? null,
@@ -173,6 +175,8 @@ export function buildByIdsFetchXml(ids: string[]): string {
     <attribute name="contactid" groupby="true" alias="id"/>
     <attribute name="fullname" groupby="true" alias="rawName"/>
     <attribute name="emailaddress1" groupby="true" alias="email"/>
+    <attribute name="address1_line1" groupby="true" alias="street1"/>
+    <attribute name="address1_line2" groupby="true" alias="street2"/>
     <attribute name="address1_city" groupby="true" alias="city"/>
     <attribute name="address1_stateorprovince" groupby="true" alias="state"/>
     <attribute name="address1_postalcode" groupby="true" alias="zip"/>

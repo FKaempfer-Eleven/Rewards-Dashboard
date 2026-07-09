@@ -11,6 +11,8 @@ export type LiveSalon = {
   salonName: string       // parsed: first "/" segment
   contactName: string     // parsed: second "/" segment (person at the salon)
   email: string | null
+  street1: string | null  // address1_line1
+  street2: string | null  // address1_line2
   city: string | null
   state: string | null    // 2-letter abbr, trimmed
   zip: string | null
@@ -95,6 +97,8 @@ export function mapRowToLiveSalon(row: Record<string, unknown>): LiveSalon {
     salonName,
     contactName,
     email: (row["email"] as string | null) || null,
+    street1: ((g("street1") as string) || "").trim() || null,
+    street2: ((g("street2") as string) || "").trim() || null,
     city: ((row["city"] as string) || "").trim() || null,
     state: ((row["state"] as string) || "").trim() || null,
     zip: ((row["zip"] as string) || "").trim() || null,

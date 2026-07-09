@@ -176,7 +176,11 @@ function AccountTab({ salon }: { salon: LiveSalon }) {
           <Field label="Contact name" value={salon.contactName} />
           <Field label="Account number" value={salon.acctnumber ?? ""} />
           <Field label="Email address" value={salon.email ?? ""} />
-          <Field label="Address" value={[salon.city, salon.state, salon.zip, salon.country].filter(Boolean).join(", ")} />
+          <Field label="Street Address 1" value={salon.street1 ?? ""} />
+          <Field label="Street Address 2" value={salon.street2 ?? ""} />
+          <Field label="City" value={salon.city ?? ""} />
+          <Field label="State" value={salon.state ?? ""} />
+          <Field label="Zip Code" value={salon.zip ?? ""} />
           {username && <Field label="Portal username" value={username} />}
         </div>
       </Section>

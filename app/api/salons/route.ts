@@ -102,6 +102,8 @@ export async function GET(req: NextRequest) {
       salonName:              row.salon_name ?? "",
       contactName:            row.contact_name ?? "",
       email:                  row.email ?? null,
+      street1:                row.street1 ?? null,
+      street2:                row.street2 ?? null,
       city:                   row.city ?? null,
       state:                  row.state ?? null,
       zip:                    row.zip ?? null,
